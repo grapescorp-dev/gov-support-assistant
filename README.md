@@ -33,7 +33,7 @@ Frontend는 **Vite** 기반이며, 서버리스 로직은 **Netlify Functions**(
 ### 1. Clone repository
 ```powershell
 git clone https://github.com/grapescorp-dev/gov-support-assistant.git
-cd gov-support-assistant
+cd gov-support-assistant 
 
 ###2. Install dependencies
 npm install
@@ -43,8 +43,7 @@ npm install
 ```powershell
 Copy-Item .env.example .env
 notepad .env
-
-
+```
 ---
 
 ## Run (Recommended: Frontend + Netlify Functions)
@@ -53,11 +52,11 @@ Frontend와 Netlify Functions를 함께 실행하는 권장 방식입니다.
 ### 1. Install Netlify CLI (최초 1회)
 ```powershell
 npm install -g netlify-cli
-
+```
 ### 2. Start development server
 ```powershell
 netlify dev
-
+```
 - Netlify Dev가 프론트엔드와 Functions를 함께 실행합니다.
 - Functions 소스 코드는 netlify/functions에서 관리합니다.
 
@@ -66,7 +65,7 @@ netlify dev
 ## Build
 ```powershell
 npm run build
-
+```
 ---
 
 ## Environment Variables
@@ -89,7 +88,7 @@ git checkout -b feat/<short-feature-name>
 git add .
 git commit -m "feat: <short message>"
 git push -u origin feat/<short-feature-name>
-
+```
 ---
 
 ## Troubleshooting
@@ -108,5 +107,5 @@ git push -u origin feat/<short-feature-name>
 git add README.md
 git commit -m "docs: complete README (markdown-lint safe)"
 git push
-
+```
 
