@@ -1,0 +1,519 @@
+import { useState, useEffect, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useProfileStore } from '../stores/useProfileStore'
+import { useBookmarkStore } from '../stores/useBookmarkStore'
+import { mockAnnouncements, categories as categoryOptions } from '../data/mockAnnouncements'
+import { getAnnouncementLink } from '../utils/getAnnouncementLink'
+import {
+  calculateMatchingScore,
+  calculateDday,
+  formatDday,
+  groupByMonth,
+  formatMonthName,
+} from '../utils/matchingScore'
+import {
+  Calendar,
+  ChevronLeft,
+  ChevronRight,
+  Filter,
+  Bookmark,
+  BookmarkCheck,
+  Building2,
+  Clock,
+  TrendingUp,
+  X,
+  Sun,
+  Moon,
+  UserCircle,
+  ExternalLink,
+} from 'lucide-react'
+import { Link } from 'react-router-dom'
+
+const VIEWS = [
+  { value: 'monthly', label: '월간' },
+  { value: 'quarterly', label: '분기' },
+  { value: 'yearly', label: '연간' },
+]
+
+const CATEGORIES = ['전체', 'AI', '음악', 'ICT', 'IT', 'CT', '콘텐츠', '창업']
+
+export function CalendarPage() {
+  const navigate = useNavigate()
+  const { getActiveProfile } = useProfileStore()
+  const { bookmarks, toggleBookmark, isBookmarked } = useBookmarkStore()
+
+  const activeProfile = getActiveProfile()
+
+  // 상태
+  const [year, setYear] = useState(new Date().getFullYear())
+  const [view, setView] = useState('monthly')
+  const [selectedCategory, setSelectedCategory] = useState('전체')
+  const [selectedOrg, setSelectedOrg] = useState('')
+  const [showHighMatchOnly, setShowHighMatchOnly] = useState(false)
+  const [showBookmarksOnly, setShowBookmarksOnly] = useState(false)
+  const [showExpired, setShowExpired] = useState(false) // 마감된 공고 표시 여부
+  const [darkMode, setDarkMode] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
+
+  // 다크모드 토글
+  useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add('dark')
+    } else {
+      document.documentElement.classList.remove('dark')
+    }
+  }, [darkMode])
+
+  // 기관 목록 추출
+  const organizations = useMemo(() => {
+    const orgs = [...new Set(mockAnnouncements.map((a) => a.organization))]
+    return orgs.sort()
+  }, [])
+
+  // 필터링된 공고 목록
+  const filteredAnnouncements = useMemo(() => {
+    // 디버깅: 전체 공고 수와 연도별 분포 확인
+    console.log('[Calendar Debug] 전체 공고 수:', mockAnnouncements.length)
+    console.log('[Calendar Debug] 현재 선택된 연도:', year)
+    console.log('[Calendar Debug] 활성 프로필:', activeProfile?.name || '없음')
+
+    let filtered = mockAnnouncements.map((announcement) => ({
+      ...announcement,
+      matchingScore: calculateMatchingScore(activeProfile, announcement),
+      dday: calculateDday(announcement.deadline),
+    }))
+
+    // 연도 필터
+    filtered = filtered.filter((a) => {
+      const deadlineYear = new Date(a.deadline).getFullYear()
+      return deadlineYear === year
+    })
+
+    // 카테고리 필터
+    if (selectedCategory !== '전체') {
+      filtered = filtered.filter((a) => a.category.includes(selectedCategory))
+    }
+
+    // 기관 필터
+    if (selectedOrg) {
+      filtered = filtered.filter((a) => a.organization === selectedOrg)
+    }
+
+    // 높은 매칭률만
+    if (showHighMatchOnly) {
+      filtered = filtered.filter((a) => a.matchingScore >= 80)
+    }
+
+    // 북마크만
+    if (showBookmarksOnly) {
+      filtered = filtered.filter((a) => bookmarks.includes(a.id))
+    }
+
+    // 마감된 공고 필터링
+    if (!showExpired) {
+      filtered = filtered.filter((a) => a.dday >= 0)
+    }
+
+    // 디버깅: 필터링 결과
+    console.log('[Calendar Debug] 필터링 후 공고 수:', filtered.length)
+
+    return filtered
+  }, [year, selectedCategory, selectedOrg, showHighMatchOnly, showBookmarksOnly, showExpired, activeProfile, bookmarks])
+
+  // 월별 그룹핑
+  const groupedAnnouncements = useMemo(() => {
+    return groupByMonth(filteredAnnouncements)
+  }, [filteredAnnouncements])
+
+  // 표시할 월 목록
+  const monthsToShow = useMemo(() => {
+    const months = []
+    const startMonth = view === 'quarterly' ? Math.floor(new Date().getMonth() / 3) * 3 : 0
+    const endMonth = view === 'quarterly' ? startMonth + 3 : 12
+
+    for (let m = startMonth; m < endMonth; m++) {
+      const key = `${year}-${String(m + 1).padStart(2, '0')}`
+      months.push(key)
+    }
+    return months
+  }, [year, view])
+
+  // 공고 카드 클릭
+  const handleAnnouncementClick = (announcement) => {
+    navigate(`/search?id=${announcement.id}`)
+  }
+
+  return (
+    <div className={`min-h-screen transition-colors ${darkMode ? 'dark bg-gray-900' : 'bg-gray-50'}`}>
+      <div className="max-w-7xl mx-auto">
+        {/* 상단 헤더 */}
+        <div className={`sticky top-0 z-20 ${darkMode ? 'bg-gray-900' : 'bg-gray-50'} py-4`}>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <h2 className={`text-2xl font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                지원사업 캘린더
+              </h2>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setYear(year - 1)}
+                  className={`p-2 rounded-lg ${darkMode ? 'hover:bg-gray-800 text-gray-400' : 'hover:bg-gray-200 text-gray-600'}`}
+                >
+                  <ChevronLeft size={20} />
+                </button>
+                <span className={`text-lg font-semibold min-w-[80px] text-center ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                  {year}년
+                </span>
+                <button
+                  onClick={() => setYear(year + 1)}
+                  className={`p-2 rounded-lg ${darkMode ? 'hover:bg-gray-800 text-gray-400' : 'hover:bg-gray-200 text-gray-600'}`}
+                >
+                  <ChevronRight size={20} />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              {/* 뷰 전환 */}
+              <div className={`flex rounded-lg p-1 ${darkMode ? 'bg-gray-800' : 'bg-gray-200'}`}>
+                {VIEWS.map((v) => (
+                  <button
+                    key={v.value}
+                    onClick={() => setView(v.value)}
+                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                      view === v.value
+                        ? 'bg-blue-600 text-white'
+                        : darkMode
+                        ? 'text-gray-400 hover:text-white'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    {v.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* 다크모드 토글 */}
+              <button
+                onClick={() => setDarkMode(!darkMode)}
+                className={`p-2 rounded-lg ${darkMode ? 'bg-gray-800 text-yellow-400' : 'bg-gray-200 text-gray-600'}`}
+              >
+                {darkMode ? <Sun size={20} /> : <Moon size={20} />}
+              </button>
+
+              {/* 필터 토글 (모바일) */}
+              <button
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                className={`lg:hidden p-2 rounded-lg ${darkMode ? 'bg-gray-800 text-gray-400' : 'bg-gray-200 text-gray-600'}`}
+              >
+                <Filter size={20} />
+              </button>
+            </div>
+          </div>
+
+          {/* 통계 */}
+          <div className="flex gap-4 mt-4 text-sm">
+            <span className={darkMode ? 'text-gray-400' : 'text-gray-600'}>
+              총 <span className="font-semibold text-blue-500">{filteredAnnouncements.length}</span>개 공고
+            </span>
+            <span className={darkMode ? 'text-gray-400' : 'text-gray-600'}>
+              북마크 <span className="font-semibold text-yellow-500">{bookmarks.length}</span>개
+            </span>
+          </div>
+
+          {/* 프로필 미설정 안내 */}
+          {!activeProfile && (
+            <div className={`mt-4 flex items-center gap-3 p-3 rounded-lg ${
+              darkMode ? 'bg-yellow-900/30 border border-yellow-700' : 'bg-yellow-50 border border-yellow-200'
+            }`}>
+              <UserCircle size={20} className="text-yellow-500 flex-shrink-0" />
+              <p className={`text-sm ${darkMode ? 'text-yellow-200' : 'text-yellow-700'}`}>
+                프로필을 먼저 설정하면 맞춤형 매칭률을 확인할 수 있습니다.
+              </p>
+              <Link
+                to="/profile"
+                className="text-sm font-medium text-yellow-600 hover:text-yellow-700 whitespace-nowrap"
+              >
+                프로필 설정 →
+              </Link>
+            </div>
+          )}
+        </div>
+
+        <div className="flex gap-6">
+          {/* 사이드바 필터 */}
+          <aside
+            className={`${
+              sidebarOpen ? 'block' : 'hidden'
+            } lg:block w-full lg:w-64 flex-shrink-0 ${
+              darkMode ? 'bg-gray-800' : 'bg-white'
+            } rounded-xl p-4 border ${darkMode ? 'border-gray-700' : 'border-gray-200'} h-fit sticky top-32`}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className={`font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>필터</h3>
+              <button
+                onClick={() => {
+                  setSelectedCategory('전체')
+                  setSelectedOrg('')
+                  setShowHighMatchOnly(false)
+                  setShowBookmarksOnly(false)
+                  setShowExpired(false)
+                }}
+                className="text-xs text-blue-500 hover:underline"
+              >
+                초기화
+              </button>
+            </div>
+
+            {/* 분야 필터 */}
+            <div className="mb-4">
+              <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                분야
+              </label>
+              <div className="flex flex-wrap gap-1.5">
+                {CATEGORIES.map((cat) => (
+                  <button
+                    key={cat}
+                    onClick={() => setSelectedCategory(cat)}
+                    className={`px-2.5 py-1 text-xs rounded-full transition-colors ${
+                      selectedCategory === cat
+                        ? 'bg-blue-600 text-white'
+                        : darkMode
+                        ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 기관 필터 */}
+            <div className="mb-4">
+              <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                기관
+              </label>
+              <select
+                value={selectedOrg}
+                onChange={(e) => setSelectedOrg(e.target.value)}
+                className={`w-full px-3 py-2 text-sm rounded-lg border ${
+                  darkMode
+                    ? 'bg-gray-700 border-gray-600 text-white'
+                    : 'bg-white border-gray-300 text-gray-900'
+                }`}
+              >
+                <option value="">전체 기관</option>
+                {organizations.map((org) => (
+                  <option key={org} value={org}>
+                    {org}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 체크박스 필터 */}
+            <div className="space-y-2">
+              <label className={`flex items-center gap-2 cursor-pointer ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                <input
+                  type="checkbox"
+                  checked={showHighMatchOnly}
+                  onChange={(e) => setShowHighMatchOnly(e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-sm">매칭률 80% 이상</span>
+              </label>
+              <label className={`flex items-center gap-2 cursor-pointer ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                <input
+                  type="checkbox"
+                  checked={showBookmarksOnly}
+                  onChange={(e) => setShowBookmarksOnly(e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-sm">북마크만 보기</span>
+              </label>
+              <label className={`flex items-center gap-2 cursor-pointer ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
+                <input
+                  type="checkbox"
+                  checked={showExpired}
+                  onChange={(e) => setShowExpired(e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-sm">마감된 공고 포함</span>
+              </label>
+            </div>
+          </aside>
+
+          {/* 메인 콘텐츠 - 월별 타임라인 */}
+          <main className="flex-1 space-y-6 pb-8">
+            {monthsToShow.map((monthKey) => {
+              const announcements = groupedAnnouncements[monthKey] || []
+              const monthName = formatMonthName(monthKey)
+
+              return (
+                <section key={monthKey}>
+                  {/* 월 헤더 */}
+                  <div className={`flex items-center gap-3 mb-3 sticky top-28 ${darkMode ? 'bg-gray-900' : 'bg-gray-50'} py-2 z-10`}>
+                    <div className={`flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                      <Calendar size={20} className="text-blue-500" />
+                      <h3 className="text-lg font-semibold">{monthName}</h3>
+                    </div>
+                    <span className={`text-sm px-2 py-0.5 rounded-full ${
+                      announcements.length > 0
+                        ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'
+                        : darkMode ? 'bg-gray-700 text-gray-400' : 'bg-gray-200 text-gray-500'
+                    }`}>
+                      {announcements.length}개
+                    </span>
+                  </div>
+
+                  {/* 공고 목록 */}
+                  {announcements.length > 0 ? (
+                    <div className="grid gap-3">
+                      {announcements.map((announcement) => (
+                        <AnnouncementCard
+                          key={announcement.id}
+                          announcement={announcement}
+                          darkMode={darkMode}
+                          isBookmarked={isBookmarked(announcement.id)}
+                          onBookmarkToggle={() => toggleBookmark(announcement.id)}
+                          onClick={() => handleAnnouncementClick(announcement)}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className={`text-center py-8 rounded-lg border ${
+                      darkMode ? 'border-gray-700 text-gray-500' : 'border-gray-200 text-gray-400'
+                    }`}>
+                      해당 월 공고 없음
+                    </div>
+                  )}
+                </section>
+              )
+            })}
+          </main>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// 공고 카드 컴포넌트
+function AnnouncementCard({ announcement, darkMode, isBookmarked, onBookmarkToggle, onClick }) {
+  const { dday, matchingScore } = announcement
+  const isUrgent = dday >= 0 && dday <= 7
+  const isExpired = dday < 0
+
+  return (
+    <div
+      onClick={onClick}
+      className={`group relative p-4 rounded-xl border cursor-pointer transition-all ${
+        darkMode
+          ? 'bg-gray-800 border-gray-700 hover:border-gray-600'
+          : 'bg-white border-gray-200 hover:border-gray-300 hover:shadow-md'
+      } ${isExpired ? 'opacity-50' : ''}`}
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1 min-w-0">
+          {/* 상단: D-day + 매칭률 */}
+          <div className="flex items-center gap-2 mb-2">
+            <span
+              className={`text-xs font-bold px-2 py-0.5 rounded ${
+                isExpired
+                  ? 'bg-gray-200 text-gray-500 dark:bg-gray-700 dark:text-gray-400'
+                  : isUrgent
+                  ? 'bg-red-100 text-red-600 dark:bg-red-900 dark:text-red-300'
+                  : 'bg-blue-100 text-blue-600 dark:bg-blue-900 dark:text-blue-300'
+              }`}
+            >
+              {formatDday(dday)}
+            </span>
+            <span
+              className={`text-xs font-medium px-2 py-0.5 rounded ${
+                matchingScore >= 80
+                  ? 'bg-green-100 text-green-600 dark:bg-green-900 dark:text-green-300'
+                  : matchingScore >= 50
+                  ? 'bg-yellow-100 text-yellow-600 dark:bg-yellow-900 dark:text-yellow-300'
+                  : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400'
+              }`}
+            >
+              <TrendingUp size={12} className="inline mr-1" />
+              {matchingScore}%
+            </span>
+          </div>
+
+          {/* 제목 */}
+          <h4 className={`font-medium mb-1 truncate ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+            {announcement.title}
+          </h4>
+
+          {/* 기관 + 마감일 */}
+          <div className="flex items-center gap-3 text-sm">
+            <span className={`flex items-center gap-1 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+              <Building2 size={14} />
+              {announcement.organization}
+            </span>
+            <span className={`flex items-center gap-1 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+              <Clock size={14} />
+              {announcement.deadline}
+            </span>
+          </div>
+
+          {/* 지원금액 */}
+          <div className={`mt-2 text-sm font-medium ${darkMode ? 'text-blue-400' : 'text-blue-600'}`}>
+            {announcement.budget}
+          </div>
+        </div>
+
+        {/* 버튼 영역 */}
+        <div className="flex items-center gap-1">
+          {/* 공고 바로가기 버튼 */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              window.open(getAnnouncementLink(announcement), '_blank')
+            }}
+            className={`p-2 rounded-lg transition-colors ${
+              darkMode
+                ? 'text-gray-500 hover:text-blue-400'
+                : 'text-gray-400 hover:text-blue-600'
+            }`}
+            title="공고 페이지로 이동"
+          >
+            <ExternalLink size={18} />
+          </button>
+
+          {/* 북마크 버튼 */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onBookmarkToggle()
+            }}
+            className={`p-2 rounded-lg transition-colors ${
+              isBookmarked
+                ? 'text-yellow-500 hover:text-yellow-600'
+                : darkMode
+                ? 'text-gray-500 hover:text-yellow-500'
+                : 'text-gray-400 hover:text-yellow-500'
+            }`}
+          >
+            {isBookmarked ? <BookmarkCheck size={20} /> : <Bookmark size={20} />}
+          </button>
+        </div>
+      </div>
+
+      {/* 카테고리 태그 */}
+      <div className="flex flex-wrap gap-1 mt-3">
+        {announcement.category.map((cat) => (
+          <span
+            key={cat}
+            className={`text-xs px-2 py-0.5 rounded ${
+              darkMode ? 'bg-gray-700 text-gray-300' : 'bg-gray-100 text-gray-600'
+            }`}
+          >
+            {cat}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}

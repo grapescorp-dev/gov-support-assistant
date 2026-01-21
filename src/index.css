@@ -1,0 +1,48 @@
+@import "tailwindcss";
+
+/* 다크모드 설정 */
+@variant dark (&:where(.dark, .dark *));
+
+body {
+  @apply bg-gray-50 text-gray-900 antialiased;
+  @apply dark:bg-gray-900 dark:text-gray-100;
+}
+
+/* 스크롤바 스타일 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-gray-100 dark:bg-gray-800;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-300 dark:bg-gray-600 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-gray-400 dark:bg-gray-500;
+}
+
+/* 선택 스타일 */
+::selection {
+  @apply bg-blue-500 text-white;
+}
+
+/* 토스트 애니메이션 */
+@keyframes slide-in {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.animate-slide-in {
+  animation: slide-in 0.3s ease-out;
+}
