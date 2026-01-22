@@ -42,6 +42,7 @@ npm install
 
 ### 3. Create .env
 .env.example을 복사하여 .env 파일을 만들고, 필요한 값을 입력하세요.
+
 Windows (PowerShell)
 ```powershell
 Copy-Item .env.example .env
