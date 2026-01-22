@@ -6,7 +6,7 @@ Frontend는 **Vite** 기반이며, 서버리스 로직은 **Netlify Functions**(
 ---
 
 ## Repository
-- GitHub: https://github.com/<ORG_NAME>/<REPO_NAME>
+- GitHub: https://github.com/<ORG_NAME>/<REPO_NAME>](https://github.com/grapescorp-dev/gov-support-assistant.git
 
 ---
 
@@ -34,11 +34,11 @@ Frontend는 **Vite** 기반이며, 서버리스 로직은 **Netlify Functions**(
 ```powershell
 git clone https://github.com/grapescorp-dev/gov-support-assistant.git
 cd gov-support-assistant 
-
-###2. Install dependencies
+```
+### 2. Install dependencies
 npm install
 
-###3. Create .env
+### 3. Create .env
 .env.example을 복사하여 .env 파일을 만들고, 필요한 값을 입력하세요.
 ```powershell
 Copy-Item .env.example .env
