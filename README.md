@@ -36,14 +36,24 @@ git clone https://github.com/grapescorp-dev/gov-support-assistant.git
 cd gov-support-assistant 
 ```
 ### 2. Install dependencies
+```powershell
 npm install
+```
 
 ### 3. Create .env
 .env.example을 복사하여 .env 파일을 만들고, 필요한 값을 입력하세요.
+Windows (PowerShell)
 ```powershell
 Copy-Item .env.example .env
 notepad .env
 ```
+macOS / Linux (bash, zsh)
+```bash
+cp .env.example .env
+nano .env
+```
+다른 편집기를 사용해도 됩니다.
+예: vim .env, code .env
 ---
 
 ## Run (Recommended: Frontend + Netlify Functions)
