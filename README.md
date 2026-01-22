@@ -54,7 +54,8 @@ cp .env.example .env
 nano .env
 ```
 다른 편집기를 사용해도 됩니다.
-예: vim .env, code .env
+예 : vim.env , code.env
+
 ---
 
 ## Run (Recommended: Frontend + Netlify Functions)
