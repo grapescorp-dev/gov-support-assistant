@@ -143,6 +143,7 @@ README.md 파일에 연습용 문장 한 줄 추가:
 ```powershell
 <!-- practice: working on feat branch -->
 ```
+저장
 
 ---
 
@@ -213,3 +214,4 @@ git commit -m "docs: complete README (markdown-lint safe)"
 git push
 ```
 
+테스트입니다.
