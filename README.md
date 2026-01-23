@@ -150,7 +150,7 @@ README.md 파일에 연습용 문장 한 줄 추가:
 ```powershell
 git status
 git add README.md
-git commit -m "docs: practice on feat branch"
+git commit -m "docs: practice on feat branch" -> 예시
 ```
 이 커밋은 feat 브랜치에만 존재합니다.
 
