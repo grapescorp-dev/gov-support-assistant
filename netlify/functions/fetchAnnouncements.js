@@ -104,21 +104,116 @@ const mapToOurCategory = (lcategory) => {
   return categoryMapping[lcategory] || []
 }
 
-// 해시태그/문자열에서 추가 카테고리 추출
+// 텍스트에서 카테고리 키워드 추출 (제목, 설명, 해시태그 등)
+const extractCategoriesFromText = (text) => {
+  if (!text) return []
+  const categories = []
+  const lowerText = String(text).toLowerCase()
+
+  // AI 관련 키워드
+  if (
+    lowerText.includes('ai') ||
+    lowerText.includes('인공지능') ||
+    lowerText.includes('머신러닝') ||
+    lowerText.includes('딥러닝') ||
+    lowerText.includes('자연어처리') ||
+    lowerText.includes('nlp') ||
+    lowerText.includes('빅데이터') ||
+    lowerText.includes('데이터분석')
+  ) {
+    categories.push('AI')
+  }
+
+  // ICT 관련 키워드
+  if (
+    lowerText.includes('ict') ||
+    lowerText.includes('정보통신') ||
+    lowerText.includes('디지털') ||
+    lowerText.includes('클라우드') ||
+    lowerText.includes('사물인터넷') ||
+    lowerText.includes('iot') ||
+    lowerText.includes('5g') ||
+    lowerText.includes('블록체인')
+  ) {
+    categories.push('ICT')
+  }
+
+  // IT 관련 키워드
+  if (
+    lowerText.includes('소프트웨어') ||
+    lowerText.includes('sw개발') ||
+    lowerText.includes('시스템') ||
+    lowerText.includes('네트워크') ||
+    lowerText.includes('보안') ||
+    lowerText.includes('플랫폼') ||
+    lowerText.includes('앱개발') ||
+    lowerText.includes('웹개발')
+  ) {
+    categories.push('IT')
+  }
+
+  // 콘텐츠/CT 관련 키워드
+  if (
+    lowerText.includes('콘텐츠') ||
+    lowerText.includes('content') ||
+    lowerText.includes('미디어') ||
+    lowerText.includes('방송') ||
+    lowerText.includes('영상') ||
+    lowerText.includes('영화') ||
+    lowerText.includes('애니메이션') ||
+    lowerText.includes('웹툰') ||
+    lowerText.includes('만화')
+  ) {
+    categories.push('콘텐츠')
+  }
+
+  // CT(문화기술) 관련 키워드
+  if (
+    lowerText.includes('문화기술') ||
+    lowerText.includes('게임') ||
+    lowerText.includes('vr') ||
+    lowerText.includes('ar') ||
+    lowerText.includes('xr') ||
+    lowerText.includes('메타버스') ||
+    lowerText.includes('실감콘텐츠')
+  ) {
+    categories.push('CT')
+  }
+
+  // 음악 관련 키워드
+  if (
+    lowerText.includes('음악') ||
+    lowerText.includes('music') ||
+    lowerText.includes('음원') ||
+    lowerText.includes('뮤직') ||
+    lowerText.includes('k-pop') ||
+    lowerText.includes('kpop') ||
+    lowerText.includes('공연') ||
+    lowerText.includes('아티스트')
+  ) {
+    categories.push('음악')
+  }
+
+  // 창업 관련 키워드
+  if (
+    lowerText.includes('창업') ||
+    lowerText.includes('스타트업') ||
+    lowerText.includes('startup') ||
+    lowerText.includes('예비창업') ||
+    lowerText.includes('초기창업') ||
+    lowerText.includes('벤처') ||
+    lowerText.includes('액셀러레이터') ||
+    lowerText.includes('사업화')
+  ) {
+    categories.push('창업')
+  }
+
+  return [...new Set(categories)] // 중복 제거
+}
+
+// 해시태그/문자열에서 추가 카테고리 추출 (기존 함수 유지 - 호환성)
 const extractCategoriesFromHashtags = (hashtags) => {
-  if (!hashtags) return []
-  const tagCategories = []
-  const lowerTags = String(hashtags).toLowerCase()
-
-  if (lowerTags.includes('ai') || lowerTags.includes('인공지능')) tagCategories.push('AI')
-  if (lowerTags.includes('ict') || lowerTags.includes('정보통신')) tagCategories.push('ICT')
-  if (lowerTags.includes('콘텐츠') || lowerTags.includes('content')) tagCategories.push('콘텐츠')
-  if (lowerTags.includes('음악') || lowerTags.includes('music')) tagCategories.push('음악')
-  if (lowerTags.includes('it') || lowerTags.includes('소프트웨어') || lowerTags.includes('sw'))
-    tagCategories.push('IT')
-  if (lowerTags.includes('ct') || lowerTags.includes('문화기술')) tagCategories.push('CT')
-
-  return tagCategories
+  return extractCategoriesFromText(hashtags)
 }
 
 const pad2 = (n) => String(n).padStart(2, '0')
@@ -191,7 +286,7 @@ const extractItemsFromApiResponse = (data) => {
   return []
 }
 
-// Bizinfo 응답 -> 공통 스키마 변환(기존 유지)
+// Bizinfo 응답 -> 공통 스키마 변환(개선: 제목/설명에서 카테고리 추출)
 const transformApiResponse = (items) => {
   return (items || []).map((item) => {
     const rawLcategory =
@@ -200,16 +295,17 @@ const transformApiResponse = (items) => {
     const baseCategories = mapToOurCategory(rawLcategory)
 
     const rawHashtags = item.hashtags || item.hashTags || ''
-    const tagCategories = extractCategoriesFromHashtags(rawHashtags)
-    const allCategories = [...new Set([...baseCategories, ...tagCategories])]
+    const title = item.pblancNm || item.title || ''
+    const summary = item.bsnsSumryCn || item.description || ''
+
+    // 제목, 설명, 해시태그에서 카테고리 추출
+    const textCategories = extractCategoriesFromText(`${title} ${summary} ${rawHashtags}`)
+    const allCategories = [...new Set([...baseCategories, ...textCategories])]
 
     const rawReqst = item.reqstBeginEndDe || item.reqstDt || ''
     const deadline = extractDeadline(rawReqst)
 
     const link = item.pblancUrl || item.rceptEngnHmpgUrl || item.link || ''
-
-    const title = item.pblancNm || item.title || ''
-    const summary = item.bsnsSumryCn || item.description || ''
 
     return {
       id: item.pblancId,
@@ -280,7 +376,7 @@ const normalizeYmdFromAny = (v) => {
 }
 
 /**
- * K-Startup API 응답을 공통 스키마로 변환
+ * K-Startup API 응답을 공통 스키마로 변환 (개선: 제목/설명에서 카테고리 추출)
  */
 const transformKstartupResponse = (items) => {
   return (items || [])
@@ -306,7 +402,9 @@ const transformKstartupResponse = (items) => {
         item.atch_file_nm ||
         ''
 
-      const categories = ['창업']
+      // 제목, 설명에서 카테고리 추출
+      const textCategories = extractCategoriesFromText(`${title} ${summary}`)
+      const categories = textCategories.length > 0 ? [...new Set(['창업', ...textCategories])] : ['창업']
 
       return {
         id: item.pbanc_sn || item.id || `${title}__${start || ''}__${end || ''}`,
@@ -443,7 +541,7 @@ const fetchMssAnnouncements = async ({ apiKey, max = 100, perPage = 100 } = {}) 
 }
 
 /**
- * MSS item(XML 블록) -> 공통 스키마 변환
+ * MSS item(XML 블록) -> 공통 스키마 변환 (개선: 제목/설명에서 카테고리 추출)
  */
 const transformMssResponse = (itemBlocks) => {
   return (itemBlocks || [])
@@ -465,8 +563,9 @@ const transformMssResponse = (itemBlocks) => {
 
       const summary = stripHtmlTags(dataContentsRaw)
 
-      const tagCats = extractCategoriesFromHashtags(`${title} ${summary}`)
-      const categories = [...new Set(['창업', ...tagCats])].filter(Boolean)
+      // 제목, 설명에서 카테고리 추출 (개선된 함수 사용)
+      const textCategories = extractCategoriesFromText(`${title} ${summary}`)
+      const categories = textCategories.length > 0 ? [...new Set(['창업', ...textCategories])] : ['창업']
 
       const deadline = applicationEndDate || null
 

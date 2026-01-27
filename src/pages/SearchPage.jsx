@@ -11,6 +11,9 @@ import { Search, Loader2, ExternalLink, Sparkles, Filter, Calendar, Building2, T
 
 const categories = ['전체', 'AI', '음악', 'ICT', 'IT', 'CT', '콘텐츠', '창업']
 
+// 맞춤 공고 필터링 기준 점수
+const MATCHING_THRESHOLD = 30
+
 export function SearchPage() {
   const navigate = useNavigate()
   const { keyword, setKeyword, results, setResults, selectedProgram, setSelectedProgram, isLoading, setLoading } = useSearchStore()
@@ -22,6 +25,7 @@ export function SearchPage() {
   const [selectedCategory, setSelectedCategory] = useState('전체')
   const [sortBy, setSortBy] = useState('deadline') // 'deadline' | 'matching'
   const [showExpired, setShowExpired] = useState(false) // 마감된 공고 표시 여부
+  const [showOnlyMatched, setShowOnlyMatched] = useState(false) // 맞춤 공고만 표시 여부
   const [aiAnalysis, setAiAnalysis] = useState(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
 
@@ -33,7 +37,7 @@ export function SearchPage() {
     let withMatchingScore = results.map((program) => ({
       ...program,
       matchingScore: calculateMatchingScore(activeProfile, program),
-      isExpired: new Date(program.deadline) < today,
+      isExpired: program.deadline ? new Date(program.deadline) < today : false,
     }))
 
     // 마감된 공고 필터링
@@ -41,12 +45,35 @@ export function SearchPage() {
       withMatchingScore = withMatchingScore.filter((p) => !p.isExpired)
     }
 
+    // 맞춤 공고만 표시 (프로필이 있고 토글이 켜져 있을 때)
+    if (showOnlyMatched && activeProfile) {
+      withMatchingScore = withMatchingScore.filter((p) => p.matchingScore >= MATCHING_THRESHOLD)
+    }
+
+    // 카테고리 필터링 (클라이언트 측에서 추가 필터링)
+    if (selectedCategory !== '전체') {
+      withMatchingScore = withMatchingScore.filter((p) => {
+        const categories = p.category || []
+        // 정확한 매칭 또는 부분 매칭 (예: 'CT'는 'CT', '콘텐츠'와 매칭)
+        return categories.some((cat) => {
+          const catLower = cat.toLowerCase()
+          const selectedLower = selectedCategory.toLowerCase()
+          return catLower === selectedLower || catLower.includes(selectedLower)
+        })
+      })
+    }
+
     if (sortBy === 'matching') {
       return [...withMatchingScore].sort((a, b) => b.matchingScore - a.matchingScore)
     }
-    // deadline 정렬 (가까운 순)
-    return [...withMatchingScore].sort((a, b) => new Date(a.deadline) - new Date(b.deadline))
-  }, [results, activeProfile, sortBy, showExpired])
+    // deadline 정렬 (가까운 순, deadline 없는 건 뒤로)
+    return [...withMatchingScore].sort((a, b) => {
+      if (!a.deadline && !b.deadline) return 0
+      if (!a.deadline) return 1
+      if (!b.deadline) return -1
+      return new Date(a.deadline) - new Date(b.deadline)
+    })
+  }, [results, activeProfile, sortBy, showExpired, showOnlyMatched, selectedCategory])
 
   // 초기 로딩 - 전체 목록 가져오기
   useEffect(() => {
@@ -62,23 +89,18 @@ export function SearchPage() {
     setSelectedProgram(null)
     setAiAnalysis(null)
 
-    console.log('[SearchPage] 검색 시작:', { keyword, selectedCategory, initial })
+    console.log('[SearchPage] 검색 시작:', { keyword, initial })
 
     try {
-      const data = await searchAnnouncements(
-        keyword,
-        selectedCategory !== '전체' ? { category: selectedCategory } : {}
-      )
+      // API는 키워드만으로 검색, 카테고리는 클라이언트에서 필터링
+      const data = await searchAnnouncements(keyword, {})
       console.log('[SearchPage] API 검색 결과:', data.length, '건')
       setResults(data)
     } catch (error) {
       console.error('[SearchPage] 검색 오류:', error)
       // 개발 환경에서는 로컬 목업 데이터 사용
       const { searchAnnouncements: localSearch } = await import('../data/mockAnnouncements')
-      let filtered = localSearch(keyword)
-      if (selectedCategory !== '전체') {
-        filtered = filtered.filter(a => a.category.includes(selectedCategory))
-      }
+      const filtered = localSearch(keyword)
       console.log('[SearchPage] 로컬 데이터 사용:', filtered.length, '건')
       setResults(filtered)
     } finally {
@@ -137,19 +159,33 @@ export function SearchPage() {
     navigate(`/editor/${newDoc.id}`)
   }
 
-  // 카테고리 변경 시 재검색
-  useEffect(() => {
-    if (results.length > 0 || keyword) {
-      handleSearch(null)
-    }
-  }, [selectedCategory])
+  // 카테고리 변경은 클라이언트 측 필터링으로 처리 (sortedResults에서 처리됨)
+  // API 재검색 불필요
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <h2 className="text-2xl font-bold text-gray-900">지원사업 검색</h2>
         <div className="text-sm text-gray-500">
-          총 <span className="font-semibold text-blue-600">{results.length}</span>개 공고
+          {showOnlyMatched && activeProfile ? (
+            <>
+              맞춤 <span className="font-semibold text-blue-600">{sortedResults.length}</span>개
+              <span className="text-gray-400 mx-1">/</span>
+              전체 {results.length}개 공고
+            </>
+          ) : (
+            <>
+              {selectedCategory !== '전체' ? (
+                <>
+                  <span className="font-semibold text-blue-600">{sortedResults.length}</span>개
+                  <span className="text-gray-400 mx-1">/</span>
+                  전체 {results.length}개 공고
+                </>
+              ) : (
+                <>총 <span className="font-semibold text-blue-600">{sortedResults.length}</span>개 공고</>
+              )}
+            </>
+          )}
         </div>
       </div>
 
@@ -180,7 +216,7 @@ export function SearchPage() {
         <div className="flex items-center gap-3 p-3 rounded-lg bg-yellow-50 border border-yellow-200">
           <UserCircle size={20} className="text-yellow-500 flex-shrink-0" />
           <p className="text-sm text-yellow-700">
-            프로필을 먼저 설정하면 맞춤형 매칭률을 확인할 수 있습니다.
+            프로필을 설정하면 맞춤형 공고 추천과 매칭률을 확인할 수 있습니다.
           </p>
           <Link
             to="/profile"
@@ -188,6 +224,28 @@ export function SearchPage() {
           >
             프로필 설정 →
           </Link>
+        </div>
+      )}
+
+      {/* 프로필 설정된 경우 맞춤 공고 토글 표시 */}
+      {activeProfile && (
+        <div className="flex items-center gap-3 p-3 rounded-lg bg-blue-50 border border-blue-200">
+          <TrendingUp size={20} className="text-blue-500 flex-shrink-0" />
+          <p className="text-sm text-blue-700">
+            <span className="font-medium">{activeProfile.serviceName || activeProfile.companyName || '내 프로필'}</span> 기준 맞춤 공고를 확인하세요.
+          </p>
+          <label className="flex items-center gap-2 cursor-pointer ml-auto">
+            <span className="text-sm font-medium text-blue-700">맞춤 공고만</span>
+            <div className="relative">
+              <input
+                type="checkbox"
+                checked={showOnlyMatched}
+                onChange={(e) => setShowOnlyMatched(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+            </div>
+          </label>
         </div>
       )}
 

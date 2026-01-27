@@ -1,6 +1,47 @@
 // 프로필 기반 지원사업 매칭률 계산
 
 /**
+ * 텍스트에서 키워드 매칭 점수 계산 (서비스 정보용)
+ * @param {string} profileText - 프로필 텍스트 (businessOverview, targetMarket 등)
+ * @param {string} announcementText - 공고 텍스트 (title, summary 등)
+ * @returns {number} 매칭된 키워드 수
+ */
+function calculateTextMatchScore(profileText, announcementText) {
+  if (!profileText || !announcementText) return 0
+
+  const profileLower = profileText.toLowerCase()
+  const announcementLower = announcementText.toLowerCase()
+
+  // 공통 키워드 목록
+  const keywords = [
+    // 기술 분야
+    'ai', '인공지능', '머신러닝', '딥러닝', '빅데이터', '클라우드', '블록체인',
+    'iot', '사물인터넷', '5g', 'ar', 'vr', 'xr', '메타버스',
+    // IT/SW
+    '소프트웨어', 'sw', '앱', '플랫폼', '웹', '모바일', 'saas',
+    // 콘텐츠
+    '콘텐츠', '미디어', '영상', '게임', '음악', '애니메이션', '웹툰',
+    // 제조/하드웨어
+    '제조', '로봇', '드론', '자동화', '스마트팩토리',
+    // 바이오/헬스케어
+    '바이오', '헬스케어', '의료', '제약', '진단',
+    // 친환경/에너지
+    '친환경', '그린', '탄소중립', '에너지', '재생에너지', 'esg',
+    // 비즈니스
+    '수출', '해외진출', 'b2b', 'b2c', '이커머스', '유통',
+  ]
+
+  let matchCount = 0
+  keywords.forEach((keyword) => {
+    if (profileLower.includes(keyword) && announcementLower.includes(keyword)) {
+      matchCount++
+    }
+  })
+
+  return matchCount
+}
+
+/**
  * 프로필과 공고를 비교하여 매칭률 계산
  * @param {Object} profile - 사용자 프로필
  * @param {Object} announcement - 지원사업 공고
@@ -12,19 +53,38 @@ export function calculateMatchingScore(profile, announcement) {
   let score = 0
   let maxScore = 0
 
-  // 1. 관심 분야 매칭 (40점)
-  maxScore += 40
+  // 1. 관심 분야 매칭 (30점) - 기존 40점에서 조정
+  maxScore += 30
   if (profile.interests && profile.interests.length > 0 && announcement.category) {
     const matchedInterests = profile.interests.filter((interest) =>
       announcement.category.includes(interest)
     )
     if (matchedInterests.length > 0) {
-      score += Math.min(40, (matchedInterests.length / announcement.category.length) * 40)
+      score += Math.min(30, (matchedInterests.length / profile.interests.length) * 30)
     }
   }
 
-  // 2. 기업 형태 매칭 (20점)
+  // 2. 서비스 정보 키워드 매칭 (20점) - 새로 추가
   maxScore += 20
+  const profileServiceText = [
+    profile.serviceName || '',
+    profile.businessOverview || '',
+    profile.targetMarket || '',
+  ].join(' ')
+  const announcementText = [
+    announcement.title || '',
+    announcement.summary || '',
+    (announcement.eligibility || []).join(' '),
+  ].join(' ')
+
+  const textMatchCount = calculateTextMatchScore(profileServiceText, announcementText)
+  if (textMatchCount > 0) {
+    // 최대 4개 키워드 매칭 시 만점
+    score += Math.min(20, textMatchCount * 5)
+  }
+
+  // 3. 기업 형태 매칭 (15점) - 기존 20점에서 조정
+  maxScore += 15
   if (profile.companyType && announcement.eligibility) {
     const eligibilityText = announcement.eligibility.join(' ').toLowerCase()
     const typeMatches = {
@@ -37,12 +97,12 @@ export function calculateMatchingScore(profile, announcement) {
 
     const matchKeywords = typeMatches[profile.companyType] || []
     if (matchKeywords.some((kw) => eligibilityText.includes(kw))) {
-      score += 20
+      score += 15
     }
   }
 
-  // 3. 업력 매칭 (15점)
-  maxScore += 15
+  // 4. 업력 매칭 (10점) - 기존 15점에서 조정
+  maxScore += 10
   if (profile.businessAge && announcement.eligibility) {
     const eligibilityText = announcement.eligibility.join(' ').toLowerCase()
     const ageMatches = {
@@ -58,11 +118,11 @@ export function calculateMatchingScore(profile, announcement) {
       profile.businessAge === 'over7' ||
       matchKeywords.some((kw) => eligibilityText.includes(kw))
     ) {
-      score += 15
+      score += 10
     }
   }
 
-  // 4. 지역 매칭 (10점)
+  // 5. 지역 매칭 (10점)
   maxScore += 10
   if (profile.region && announcement.organization) {
     const orgText = announcement.organization.toLowerCase()
@@ -83,7 +143,7 @@ export function calculateMatchingScore(profile, announcement) {
     }
   }
 
-  // 5. 인증 보유 시 가산점 (15점)
+  // 6. 인증 보유 시 가산점 (15점)
   maxScore += 15
   if (profile.certifications && profile.certifications.length > 0) {
     const eligibilityText = (announcement.eligibility || []).join(' ').toLowerCase()
