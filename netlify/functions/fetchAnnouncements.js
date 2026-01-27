@@ -2,6 +2,67 @@
 // API 문서: https://www.bizinfo.go.kr/web/lay1/program/S1T175C174/apiDetail.do?id=bizinfoApi
 const BIZINFO_API_URL = 'https://www.bizinfo.go.kr/uss/rss/bizinfoApi.do'
 
+// 타임아웃이 있는 fetch 함수
+const fetchWithTimeout = async (url, options = {}, timeoutMs = 8000) => {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    })
+    clearTimeout(timeoutId)
+    return response
+  } catch (error) {
+    clearTimeout(timeoutId)
+    if (error.name === 'AbortError') {
+      throw new Error(`Request timeout after ${timeoutMs}ms`)
+    }
+    throw error
+  }
+}
+
+// 간단한 mock 데이터 (API 실패 시 fallback)
+const fallbackMockData = [
+  {
+    id: 'mock-001',
+    title: '2026년 AI 융합 중소기업 기술개발 지원사업',
+    organization: '기업마당',
+    category: ['AI', 'IT'],
+    deadline: '2026-03-31',
+    budget: '최대 5억원',
+    eligibility: ['중소기업', 'AI 관련 기술 보유'],
+    link: 'https://www.bizinfo.go.kr',
+    summary: 'AI 기술을 활용한 제품/서비스 개발 중소기업 지원 (API 연결 대기 중 - mock 데이터)',
+    source: 'mock',
+  },
+  {
+    id: 'mock-002',
+    title: '2026년 초기창업패키지',
+    organization: 'K-스타트업',
+    category: ['창업', 'ICT'],
+    deadline: '2026-02-28',
+    budget: '최대 1억원',
+    eligibility: ['예비창업자', '창업 3년 미만'],
+    link: 'https://www.k-startup.go.kr',
+    summary: '예비창업자 및 초기 스타트업 대상 사업화 자금 지원 (API 연결 대기 중 - mock 데이터)',
+    source: 'mock',
+  },
+  {
+    id: 'mock-003',
+    title: '콘텐츠 제작 지원사업',
+    organization: '한국콘텐츠진흥원',
+    category: ['콘텐츠', 'CT'],
+    deadline: '2026-04-15',
+    budget: '최대 3억원',
+    eligibility: ['콘텐츠 제작사'],
+    link: 'https://www.kocca.kr',
+    summary: '콘텐츠 제작 및 유통 지원 (API 연결 대기 중 - mock 데이터)',
+    source: 'mock',
+  },
+]
+
 // K-Startup 공공데이터 API 연동 (창업진흥원 K-Startup 조회서비스 v2.0)
 // (가이드 기준) https://apis.data.go.kr/B552735/kisedKstartupService01/getAnnouncementInformation01
 const KSTARTUP_API_URL =
@@ -355,58 +416,30 @@ const parseMssXmlEnvelope = (xml) => {
 }
 
 /**
- * ✅ MSS API 호출 (페이지네이션)
- * - 실제 동작 URL을 반영: /getbizList_v2
- * - 키 파라미터는 serviceKey(소문자)로 확정
+ * ✅ MSS API 호출 (단일 페이지, 타임아웃 적용)
  */
-const fetchMssAnnouncements = async ({ apiKey, max = 300, perPage = 50 } = {}) => {
-  const safePerPage = Math.max(1, Math.min(Number(perPage) || 50, 200))
-  const safeMax = Math.max(0, Math.min(Number(max) || 300, 5000))
+const fetchMssAnnouncements = async ({ apiKey, max = 30, perPage = 30 } = {}) => {
+  const params = new URLSearchParams({
+    serviceKey: apiKey,
+    pageNo: '1',
+    numOfRows: String(Math.min(perPage, 30)), // 30개로 제한
+  })
 
-  let pageNo = 1
-  let allItemBlocks = []
-  let totalCount = null
-
-  while (allItemBlocks.length < safeMax) {
-    const params = new URLSearchParams({
-      serviceKey: apiKey, // ✅ 소문자 확정
-      pageNo: String(pageNo),
-      numOfRows: String(safePerPage),
-    })
-
-    const url = `${MSS_API_URL}?${params.toString()}`
-    const res = await fetch(url)
-    if (!res.ok) {
-      const body = await res.text().catch(() => '')
-      throw new Error(
-        `[MSS API] request failed: ${res.status} ${res.statusText}${
-          body ? ` | body: ${body.slice(0, 300)}` : ''
-        }`
-      )
-    }
-
-    const xml = await res.text()
-    const envelope = parseMssXmlEnvelope(xml)
-
-    // 정상코드가 아닌 경우
-    if (envelope.resultCode && envelope.resultCode !== '00') {
-      throw new Error(`[MSS API] resultCode=${envelope.resultCode} resultMsg=${envelope.resultMsg}`)
-    }
-
-    if (typeof envelope.totalCount === 'number') totalCount = envelope.totalCount
-
-    const itemBlocks = extractMssItemsFromXml(xml)
-    if (!itemBlocks.length) break
-
-    allItemBlocks = allItemBlocks.concat(itemBlocks)
-
-    if (typeof totalCount === 'number' && allItemBlocks.length >= totalCount) break
-
-    pageNo += 1
-    if (pageNo > 200) break // 안전장치
+  const url = `${MSS_API_URL}?${params.toString()}`
+  const res = await fetchWithTimeout(url, {}, 8000) // 8초 타임아웃
+  if (!res.ok) {
+    throw new Error(`[MSS API] request failed: ${res.status} ${res.statusText}`)
   }
 
-  return allItemBlocks.slice(0, safeMax)
+  const xml = await res.text()
+  const envelope = parseMssXmlEnvelope(xml)
+
+  if (envelope.resultCode && envelope.resultCode !== '00') {
+    throw new Error(`[MSS API] resultCode=${envelope.resultCode} resultMsg=${envelope.resultMsg}`)
+  }
+
+  const itemBlocks = extractMssItemsFromXml(xml)
+  return itemBlocks.slice(0, max)
 }
 
 /**
@@ -497,38 +530,23 @@ const dedupAnnouncements = (arr) => {
 }
 
 /**
- * K-Startup 공고 목록 조회(페이지네이션)
+ * K-Startup 공고 목록 조회 (단일 페이지, 타임아웃 적용)
  */
-const fetchKstartupAnnouncements = async ({ apiKey, max = 300, perPage = 100 } = {}) => {
-  const safePerPage = Math.max(1, Math.min(Number(perPage) || 100, 200))
-  const safeMax = Math.max(0, Math.min(Number(max) || 300, 2000))
+const fetchKstartupAnnouncements = async ({ apiKey, max = 50, perPage = 50 } = {}) => {
+  const params = new URLSearchParams({
+    ServiceKey: apiKey,
+    page: '1',
+    perPage: String(Math.min(perPage, 50)), // 50개로 제한
+    returnType: 'json',
+  })
 
-  let page = 1
-  let all = []
-  let lastPageHadItems = true
+  const url = `${KSTARTUP_API_URL}?${params.toString()}`
+  const res = await fetchWithTimeout(url, {}, 8000) // 8초 타임아웃
+  if (!res.ok) throw new Error(`[K-Startup API] request failed: ${res.status} ${res.statusText}`)
 
-  while (all.length < safeMax && lastPageHadItems) {
-    const params = new URLSearchParams({
-      ServiceKey: apiKey,
-      page: String(page),
-      perPage: String(safePerPage),
-      returnType: 'json',
-    })
-
-    const url = `${KSTARTUP_API_URL}?${params.toString()}`
-    const res = await fetch(url)
-    if (!res.ok) throw new Error(`[K-Startup API] request failed: ${res.status} ${res.statusText}`)
-
-    const data = await res.json()
-    const items = extractItemsFromKstartupResponse(data)
-    lastPageHadItems = items.length > 0
-
-    all = all.concat(items)
-    page += 1
-    if (page > 50) break
-  }
-
-  return all.slice(0, safeMax)
+  const data = await res.json()
+  const items = extractItemsFromKstartupResponse(data)
+  return items.slice(0, max)
 }
 
 export async function handler(event) {
@@ -586,86 +604,99 @@ export async function handler(event) {
     const kstartupKey = process.env.DATA_GO_KR_API_KEY
     const mssKey = process.env.MSS_API_KEY || process.env.DATA_GO_KR_API_KEY
 
-    if (!bizinfoKey) {
+    // API 키가 없으면 mock 데이터 반환
+    if (!bizinfoKey && !kstartupKey && !mssKey) {
+      console.log('[Announcements] No API keys configured, returning mock data')
       return {
-        statusCode: 500,
+        statusCode: 200,
         headers,
         body: JSON.stringify({
-          success: false,
-          error:
-            'Bizinfo API key not configured. Set BIZINFO_API_KEY (or DATA_GO_KR_API_KEY as fallback).',
+          success: true,
+          data: fallbackMockData,
+          total: fallbackMockData.length,
+          cached: false,
+          warning: 'API keys not configured. Showing mock data.',
         }),
       }
     }
 
     // ===============
-    // 1) 기업마당 호출
+    // 1) 기업마당 호출 (타임아웃 8초)
     // ===============
-    const bizinfoParams = new URLSearchParams({
-      crtfcKey: bizinfoKey,
-      dataType: 'json',
-      searchCnt: '500',
-    })
+    let bizinfoItems = []
+    let bizinfoError = null
 
-    console.log('[Bizinfo API] Fetching from API...')
-    const bizinfoResponse = await fetch(`${BIZINFO_API_URL}?${bizinfoParams}`)
-    if (!bizinfoResponse.ok) {
-      throw new Error(
-        `Bizinfo API request failed: ${bizinfoResponse.status} ${bizinfoResponse.statusText}`
-      )
+    if (bizinfoKey) {
+      const bizinfoParams = new URLSearchParams({
+        crtfcKey: bizinfoKey,
+        dataType: 'json',
+        searchCnt: '100',
+      })
+
+      try {
+        console.log('[Bizinfo API] Fetching from API...')
+        const bizinfoResponse = await fetchWithTimeout(
+          `${BIZINFO_API_URL}?${bizinfoParams}`,
+          {},
+          8000
+        )
+        if (!bizinfoResponse.ok) {
+          throw new Error(
+            `Bizinfo API request failed: ${bizinfoResponse.status} ${bizinfoResponse.statusText}`
+          )
+        }
+
+        const bizinfoData = await bizinfoResponse.json()
+        bizinfoItems = extractItemsFromApiResponse(bizinfoData)
+      } catch (e) {
+        bizinfoError = e
+        console.error('[Bizinfo API Error]', e.message)
+        bizinfoItems = []
+      }
     }
 
-    const bizinfoData = await bizinfoResponse.json()
-    const bizinfoItems = extractItemsFromApiResponse(bizinfoData)
-
     // ===============
-    // 2) K-Startup 호출(옵션)
+    // 2) K-Startup 호출(옵션, 타임아웃 8초)
     // ===============
-    const kstartupMax = Number(process.env.KSTARTUP_MAX || 300)
-    const kstartupPerPage = Number(process.env.KSTARTUP_PER_PAGE || 100)
-
     let kstartupItems = []
     let kstartupError = null
 
     if (!kstartupKey) {
-      console.warn('[K-Startup API] DATA_GO_KR_API_KEY not configured; skipping K-Startup fetch.')
+      console.warn('[K-Startup API] DATA_GO_KR_API_KEY not configured; skipping.')
     } else {
       try {
         console.log('[K-Startup API] Fetching from API...')
         kstartupItems = await fetchKstartupAnnouncements({
           apiKey: kstartupKey,
-          max: kstartupMax,
-          perPage: kstartupPerPage,
+          max: 50,
+          perPage: 50,
         })
       } catch (e) {
         kstartupError = e
-        console.error('[K-Startup API Error]', e)
+        console.error('[K-Startup API Error]', e.message)
         kstartupItems = []
       }
     }
 
     // ===============
-    // 3) MSS 호출(옵션, XML)
+    // 3) MSS 호출(옵션, 타임아웃 8초)
     // ===============
-    const mssMax = Number(process.env.MSS_MAX || 300)
-    const mssPerPage = Number(process.env.MSS_PER_PAGE || 50)
-
     let mssItemBlocks = []
     let mssError = null
 
     if (!mssKey) {
-      console.warn('[MSS API] MSS_API_KEY/DATA_GO_KR_API_KEY not configured; skipping MSS fetch.')
+      console.warn('[MSS API] MSS_API_KEY not configured; skipping.')
     } else {
       try {
         console.log('[MSS API] Fetching from API...')
         mssItemBlocks = await fetchMssAnnouncements({
           apiKey: mssKey,
-          max: mssMax,
-          perPage: mssPerPage,
+          max: 30,
+          perPage: 30,
         })
       } catch (e) {
         mssError = e
-        console.error('[MSS API Error]', e)
+        console.error('[MSS API Error]', e.message)
         mssItemBlocks = []
       }
     }
@@ -728,11 +759,17 @@ export async function handler(event) {
     const transformedKstartup = transformKstartupResponse(kstartupItems)
     const transformedMss = transformMssResponse(mssItemBlocks)
 
-    const combined = dedupAnnouncements([
+    let combined = dedupAnnouncements([
       ...transformedBizinfo,
       ...transformedKstartup,
       ...transformedMss,
     ])
+
+    // 모든 API가 실패하거나 데이터가 없으면 mock 데이터 사용
+    if (combined.length === 0) {
+      console.log('[Announcements] All APIs failed or returned empty, using mock data')
+      combined = fallbackMockData
+    }
 
     cache = { data: combined, timestamp: Date.now() }
 
@@ -759,8 +796,9 @@ export async function handler(event) {
     })
 
     const warnings = []
-    if (kstartupError) warnings.push('K-Startup API failed; returned other sources only.')
-    if (mssError) warnings.push('MSS API failed; returned other sources only.')
+    if (bizinfoError) warnings.push('Bizinfo API failed.')
+    if (kstartupError) warnings.push('K-Startup API failed.')
+    if (mssError) warnings.push('MSS API failed.')
 
     return {
       statusCode: 200,
@@ -780,10 +818,17 @@ export async function handler(event) {
     }
   } catch (error) {
     console.error('[Announcements API Error]', error)
+    // 에러 발생 시에도 mock 데이터 반환 (서비스 가용성 우선)
     return {
-      statusCode: 500,
+      statusCode: 200,
       headers,
-      body: JSON.stringify({ success: false, error: error.message }),
+      body: JSON.stringify({
+        success: true,
+        data: fallbackMockData,
+        total: fallbackMockData.length,
+        cached: false,
+        warning: `API error: ${error.message}. Showing mock data.`,
+      }),
     }
   }
 }
