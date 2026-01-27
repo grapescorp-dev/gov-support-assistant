@@ -701,9 +701,8 @@ export async function handler(event) {
       }
     }
 
-    // 디버그: 구조 확인
+    // 디버그: 간소화된 구조 확인
     if (debug === 'true') {
-      const bizinfoJsonArray = bizinfoData?.jsonArray
       return {
         statusCode: 200,
         headers,
@@ -712,40 +711,16 @@ export async function handler(event) {
           debug: {
             env: { hasBizinfoKey: !!bizinfoKey, hasKstartupKey: !!kstartupKey, hasMssKey: !!mssKey },
             bizinfo: {
-              topKeys:
-                bizinfoData && typeof bizinfoData === 'object'
-                  ? Object.keys(bizinfoData)
-                  : typeof bizinfoData,
-              hasJsonArray: !!bizinfoJsonArray,
-              jsonArrayKeys:
-                bizinfoJsonArray && typeof bizinfoJsonArray === 'object'
-                  ? Object.keys(bizinfoJsonArray)
-                  : null,
               itemsLength: bizinfoItems.length,
-              sampleItemKeys:
-                bizinfoItems[0] && typeof bizinfoItems[0] === 'object'
-                  ? Object.keys(bizinfoItems[0]).slice(0, 40)
-                  : null,
+              error: bizinfoError ? bizinfoError.message : null,
             },
             kstartup: {
               itemsLength: kstartupItems.length,
-              error: kstartupError ? String(kstartupError.message || kstartupError) : null,
+              error: kstartupError ? kstartupError.message : null,
             },
             mss: {
               itemsLength: mssItemBlocks.length,
-              sampleParsedKeys:
-                mssItemBlocks[0] && typeof mssItemBlocks[0] === 'string'
-                  ? {
-                      itemId: !!getTagText(mssItemBlocks[0], 'itemId'),
-                      title: !!getTagText(mssItemBlocks[0], 'title'),
-                      applicationStartDate: !!getTagText(mssItemBlocks[0], 'applicationStartDate'),
-                      applicationEndDate: !!getTagText(mssItemBlocks[0], 'applicationEndDate'),
-                      viewUrl: !!getTagText(mssItemBlocks[0], 'viewUrl'),
-                      fileNameCount: getTagTexts(mssItemBlocks[0], 'fileName').length,
-                      fileUrlCount: getTagTexts(mssItemBlocks[0], 'fileUrl').length,
-                    }
-                  : null,
-              error: mssError ? String(mssError.message || mssError) : null,
+              error: mssError ? mssError.message : null,
             },
           },
         }),
