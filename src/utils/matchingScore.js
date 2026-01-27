@@ -1,28 +1,90 @@
 // 프로필 기반 지원사업 매칭률 계산
 
 // 전체 지역 매핑 (프로필 region 값 -> 키워드 배열)
+// 시·도 + 주요 시·군 단위까지 포함
 const REGION_KEYWORDS = {
-  seoul: ['서울'],
-  gyeonggi: ['경기', '판교', '성남', '수원', '용인', '화성', '고양', '안양', '부천'],
-  incheon: ['인천'],
-  gangwon: ['강원', '춘천', '원주', '강릉'],
-  daejeon: ['대전'],
-  sejong: ['세종'],
-  chungbuk: ['충북', '충청북도', '청주', '충주'],
-  chungnam: ['충남', '충청남도', '천안', '아산'],
-  jeonbuk: ['전북', '전라북도', '전주', '익산', '군산'],
-  jeonnam: ['전남', '전라남도', '광주', '목포', '여수', '순천'],
-  gwangju: ['광주'],
-  gyeongbuk: ['경북', '경상북도', '포항', '구미', '경주', '안동'],
-  gyeongnam: ['경남', '경상남도', '창원', '김해', '진주', '양산'],
-  daegu: ['대구'],
-  busan: ['부산'],
-  ulsan: ['울산'],
-  jeju: ['제주'],
+  seoul: {
+    main: ['서울'],
+    districts: ['강남', '서초', '송파', '강동', '마포', '영등포', '구로', '금천', '관악', '동작', '용산', '종로', '중구', '성동', '광진', '동대문', '중랑', '성북', '강북', '도봉', '노원', '은평', '서대문', '양천', '강서'],
+  },
+  gyeonggi: {
+    main: ['경기'],
+    cities: ['성남', '수원', '용인', '화성', '고양', '안양', '부천', '평택', '김포', '파주', '양주', '광주', '하남', '의정부', '시흥', '안산', '군포', '의왕', '과천', '오산', '이천', '여주', '양평', '가평', '포천', '동두천', '연천', '광명', '안성', '구리', '남양주'],
+  },
+  incheon: {
+    main: ['인천'],
+    districts: ['중구', '동구', '미추홀', '연수', '남동', '부평', '계양', '서구', '강화', '옹진'],
+  },
+  gangwon: {
+    main: ['강원'],
+    cities: ['춘천', '원주', '강릉', '동해', '태백', '속초', '삼척', '홍천', '횡성', '영월', '평창', '정선', '철원', '화천', '양구', '인제', '고성', '양양'],
+  },
+  daejeon: {
+    main: ['대전'],
+    districts: ['동구', '중구', '서구', '유성', '대덕'],
+  },
+  sejong: {
+    main: ['세종'],
+    districts: [],
+  },
+  chungbuk: {
+    main: ['충북', '충청북도'],
+    cities: ['청주', '충주', '제천', '보은', '옥천', '영동', '증평', '진천', '괴산', '음성', '단양'],
+  },
+  chungnam: {
+    main: ['충남', '충청남도'],
+    cities: ['천안', '아산', '공주', '보령', '서산', '논산', '계룡', '당진', '금산', '부여', '서천', '청양', '홍성', '예산', '태안'],
+  },
+  jeonbuk: {
+    main: ['전북', '전라북도'],
+    cities: ['전주', '익산', '군산', '정읍', '남원', '김제', '완주', '진안', '무주', '장수', '임실', '순창', '고창', '부안'],
+  },
+  jeonnam: {
+    main: ['전남', '전라남도'],
+    cities: ['목포', '여수', '순천', '나주', '광양', '담양', '곡성', '구례', '고흥', '보성', '화순', '장흥', '강진', '해남', '영암', '무안', '함평', '영광', '장성', '완도', '진도', '신안'],
+  },
+  gwangju: {
+    main: ['광주'],
+    districts: ['동구', '서구', '남구', '북구', '광산'],
+  },
+  gyeongbuk: {
+    main: ['경북', '경상북도'],
+    cities: ['포항', '구미', '경주', '안동', '김천', '영주', '영천', '상주', '문경', '경산', '군위', '의성', '청송', '영양', '영덕', '청도', '고령', '성주', '칠곡', '예천', '봉화', '울진', '울릉'],
+  },
+  gyeongnam: {
+    main: ['경남', '경상남도'],
+    cities: ['창원', '김해', '진주', '양산', '거제', '통영', '사천', '밀양', '함안', '거창', '창녕', '고성', '하동', '합천', '남해', '함양', '산청', '의령'],
+  },
+  daegu: {
+    main: ['대구'],
+    districts: ['중구', '동구', '서구', '남구', '북구', '수성', '달서', '달성', '군위'],
+  },
+  busan: {
+    main: ['부산'],
+    districts: ['중구', '서구', '동구', '영도', '부산진', '동래', '남구', '북구', '해운대', '사하', '금정', '강서', '연제', '수영', '사상', '기장'],
+  },
+  ulsan: {
+    main: ['울산'],
+    districts: ['중구', '남구', '동구', '북구', '울주'],
+  },
+  jeju: {
+    main: ['제주'],
+    cities: ['서귀포'],
+  },
+}
+
+// 모든 지역 키워드를 플랫하게 추출하는 헬퍼 함수
+function getAllKeywordsForRegion(regionData) {
+  const keywords = [...regionData.main]
+  if (regionData.districts) keywords.push(...regionData.districts)
+  if (regionData.cities) keywords.push(...regionData.cities)
+  return keywords
 }
 
 // 모든 지역 키워드 (지역 제한 감지용)
-const ALL_REGION_KEYWORDS = Object.values(REGION_KEYWORDS).flat()
+const ALL_REGION_KEYWORDS = Object.values(REGION_KEYWORDS).flatMap((regionData) =>
+  getAllKeywordsForRegion(regionData)
+)
 
 // 지역 코드 -> 한글 이름 매핑
 const REGION_NAMES = {
@@ -48,16 +110,21 @@ const REGION_NAMES = {
 /**
  * 지역 코드를 한글 이름으로 변환
  * @param {string} regionCode - 지역 코드 (예: 'seoul')
- * @returns {string} 한글 지역명 (예: '서울')
+ * @param {string} detectedCity - 감지된 시·군·구명 (선택)
+ * @returns {string} 한글 지역명 (예: '서울' 또는 '경기 김포')
  */
-export function getRegionName(regionCode) {
-  return REGION_NAMES[regionCode] || regionCode
+export function getRegionName(regionCode, detectedCity) {
+  const regionName = REGION_NAMES[regionCode] || regionCode
+  if (detectedCity) {
+    return `${regionName} ${detectedCity}`
+  }
+  return regionName
 }
 
 /**
  * 공고에서 지역 제한 정보 추출
  * @param {Object} announcement - 공고 객체
- * @returns {Object} { type: 'nationwide' | 'restricted' | 'unknown', region?: string }
+ * @returns {Object} { type: 'nationwide' | 'restricted' | 'unknown', region?: string, detectedCity?: string }
  */
 export function extractRegionRestriction(announcement) {
   const text = [
@@ -79,32 +146,46 @@ export function extractRegionRestriction(announcement) {
     return { type: 'nationwide' }
   }
 
-  // 특정 지역 제한 패턴 확인
-  for (const [regionKey, keywords] of Object.entries(REGION_KEYWORDS)) {
-    for (const kw of keywords) {
-      // "XX 소재", "XX 지역", "XX시", "XX도" 등의 패턴
+  // 특정 지역 제한 패턴 확인 (시·도 및 시·군·구 단위)
+  for (const [regionKey, regionData] of Object.entries(REGION_KEYWORDS)) {
+    const allKeywords = getAllKeywordsForRegion(regionData)
+
+    for (const kw of allKeywords) {
+      // "XX 소재", "XX 지역", "XX시", "XX도", "XX군", "XX구" 등의 패턴
       if (
         text.includes(`${kw} 소재`) ||
         text.includes(`${kw} 지역`) ||
         text.includes(`${kw}시 `) ||
         text.includes(`${kw}도 `) ||
+        text.includes(`${kw}군 `) ||
+        text.includes(`${kw}구 `) ||
         text.includes(`${kw} 기업`) ||
         text.includes(`${kw} 창업`) ||
         text.includes(`${kw} 스타트업`) ||
         text.includes(`${kw}지역`)
       ) {
-        return { type: 'restricted', region: regionKey }
+        return {
+          type: 'restricted',
+          region: regionKey,
+          detectedCity: kw !== regionData.main[0] ? kw : undefined
+        }
       }
     }
   }
 
-  // 기관명에 지역이 포함된 경우 (예: "대구창조경제혁신센터")
+  // 기관명에 지역이 포함된 경우 (예: "대구창조경제혁신센터", "김포시청")
   const orgText = (announcement.organization || '').toLowerCase()
-  for (const [regionKey, keywords] of Object.entries(REGION_KEYWORDS)) {
-    for (const kw of keywords) {
+  for (const [regionKey, regionData] of Object.entries(REGION_KEYWORDS)) {
+    const allKeywords = getAllKeywordsForRegion(regionData)
+
+    for (const kw of allKeywords) {
       if (orgText.includes(kw)) {
         // 기관명에 지역이 있으면 해당 지역 우대 (단, 제한은 아님)
-        return { type: 'preferred', region: regionKey }
+        return {
+          type: 'preferred',
+          region: regionKey,
+          detectedCity: kw !== regionData.main[0] ? kw : undefined
+        }
       }
     }
   }

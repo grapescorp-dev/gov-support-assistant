@@ -389,7 +389,7 @@ export function SearchPage() {
                     <div className="flex items-center gap-1.5 mt-2 px-2 py-1 bg-orange-50 border border-orange-200 rounded text-xs text-orange-700">
                       <AlertTriangle size={12} />
                       <span>
-                        {getRegionName(program.regionRestriction.region)} 지역 기업 대상 공고입니다
+                        {getRegionName(program.regionRestriction.region, program.regionRestriction.detectedCity)} 지역 기업 대상 공고입니다
                       </span>
                     </div>
                   )}
