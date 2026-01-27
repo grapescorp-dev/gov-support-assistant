@@ -213,8 +213,8 @@ export function calculateMatchingScore(profile, announcement) {
     }
   }
 
-  // 4. 업력 매칭 (10점) - 기존 15점에서 조정
-  maxScore += 10
+  // 4. 업력 매칭 (15점)
+  maxScore += 15
   if (profile.businessAge && announcement.eligibility) {
     const eligibilityText = announcement.eligibility.join(' ').toLowerCase()
     const ageMatches = {
@@ -230,7 +230,7 @@ export function calculateMatchingScore(profile, announcement) {
       profile.businessAge === 'over7' ||
       matchKeywords.some((kw) => eligibilityText.includes(kw))
     ) {
-      score += 10
+      score += 15
     }
   }
 
