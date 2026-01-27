@@ -416,17 +416,17 @@ const parseMssXmlEnvelope = (xml) => {
 }
 
 /**
- * ✅ MSS API 호출 (단일 페이지, 타임아웃 적용)
+ * ✅ MSS API 호출 (최신순 100개, 타임아웃 적용)
  */
-const fetchMssAnnouncements = async ({ apiKey, max = 30, perPage = 30 } = {}) => {
+const fetchMssAnnouncements = async ({ apiKey, max = 100, perPage = 100 } = {}) => {
   const params = new URLSearchParams({
     serviceKey: apiKey,
     pageNo: '1',
-    numOfRows: String(Math.min(perPage, 30)), // 30개로 제한
+    numOfRows: String(Math.min(perPage, 100)), // 100개 요청
   })
 
   const url = `${MSS_API_URL}?${params.toString()}`
-  const res = await fetchWithTimeout(url, {}, 8000) // 8초 타임아웃
+  const res = await fetchWithTimeout(url, {}, 15000) // 15초 타임아웃 (데이터 많아서 늘림)
   if (!res.ok) {
     throw new Error(`[MSS API] request failed: ${res.status} ${res.statusText}`)
   }
@@ -530,18 +530,18 @@ const dedupAnnouncements = (arr) => {
 }
 
 /**
- * K-Startup 공고 목록 조회 (단일 페이지, 타임아웃 적용)
+ * K-Startup 공고 목록 조회 (최신순 100개, 타임아웃 적용)
  */
-const fetchKstartupAnnouncements = async ({ apiKey, max = 50, perPage = 50 } = {}) => {
+const fetchKstartupAnnouncements = async ({ apiKey, max = 100, perPage = 100 } = {}) => {
   const params = new URLSearchParams({
     ServiceKey: apiKey,
     page: '1',
-    perPage: String(Math.min(perPage, 50)), // 50개로 제한
+    perPage: String(Math.min(perPage, 100)), // 100개 요청
     returnType: 'json',
   })
 
   const url = `${KSTARTUP_API_URL}?${params.toString()}`
-  const res = await fetchWithTimeout(url, {}, 8000) // 8초 타임아웃
+  const res = await fetchWithTimeout(url, {}, 15000) // 15초 타임아웃 (데이터 많아서 늘림)
   if (!res.ok) throw new Error(`[K-Startup API] request failed: ${res.status} ${res.statusText}`)
 
   const data = await res.json()
@@ -668,8 +668,8 @@ export async function handler(event) {
         console.log('[K-Startup API] Fetching from API...')
         kstartupItems = await fetchKstartupAnnouncements({
           apiKey: kstartupKey,
-          max: 50,
-          perPage: 50,
+          max: 100,
+          perPage: 100,
         })
       } catch (e) {
         kstartupError = e
@@ -691,8 +691,8 @@ export async function handler(event) {
         console.log('[MSS API] Fetching from API...')
         mssItemBlocks = await fetchMssAnnouncements({
           apiKey: mssKey,
-          max: 30,
-          perPage: 30,
+          max: 100,
+          perPage: 100,
         })
       } catch (e) {
         mssError = e
