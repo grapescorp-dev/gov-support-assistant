@@ -4,10 +4,10 @@ import { useSearchStore } from '../stores/useSearchStore'
 import { useProfileStore } from '../stores/useProfileStore'
 import { useDocumentStore } from '../stores/useDocumentStore'
 import { searchAnnouncements, analyzeProgram } from '../api/announcements'
-import { calculateMatchingScore } from '../utils/matchingScore'
+import { calculateMatchingScore, extractRegionRestriction, getRegionName } from '../utils/matchingScore'
 import { getAnnouncementLink } from '../utils/getAnnouncementLink'
 import { stripHtml } from '../utils/stripHtml'
-import { Search, Loader2, ExternalLink, Sparkles, Filter, Calendar, Building2, Tag, ArrowUpDown, UserCircle, TrendingUp } from 'lucide-react'
+import { Search, Loader2, ExternalLink, Sparkles, Filter, Calendar, Building2, Tag, ArrowUpDown, UserCircle, TrendingUp, MapPin, AlertTriangle } from 'lucide-react'
 
 const categories = ['전체', 'AI', '음악', 'ICT', 'IT', 'CT', '콘텐츠', '창업']
 
@@ -34,11 +34,21 @@ export function SearchPage() {
     const today = new Date()
     today.setHours(0, 0, 0, 0)
 
-    let withMatchingScore = results.map((program) => ({
-      ...program,
-      matchingScore: calculateMatchingScore(activeProfile, program),
-      isExpired: program.deadline ? new Date(program.deadline) < today : false,
-    }))
+    let withMatchingScore = results.map((program) => {
+      const regionRestriction = extractRegionRestriction(program)
+      const isRegionMismatch =
+        activeProfile?.region &&
+        regionRestriction.type === 'restricted' &&
+        regionRestriction.region !== activeProfile.region
+
+      return {
+        ...program,
+        matchingScore: calculateMatchingScore(activeProfile, program),
+        isExpired: program.deadline ? new Date(program.deadline) < today : false,
+        regionRestriction,
+        isRegionMismatch,
+      }
+    })
 
     // 마감된 공고 필터링
     if (!showExpired) {
@@ -373,6 +383,16 @@ export function SearchPage() {
                       </span>
                     ))}
                   </div>
+
+                  {/* 지역 불일치 경고 */}
+                  {program.isRegionMismatch && (
+                    <div className="flex items-center gap-1.5 mt-2 px-2 py-1 bg-orange-50 border border-orange-200 rounded text-xs text-orange-700">
+                      <AlertTriangle size={12} />
+                      <span>
+                        {getRegionName(program.regionRestriction.region)} 지역 기업 대상 공고입니다
+                      </span>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

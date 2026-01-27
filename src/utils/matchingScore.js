@@ -1,5 +1,117 @@
 // 프로필 기반 지원사업 매칭률 계산
 
+// 전체 지역 매핑 (프로필 region 값 -> 키워드 배열)
+const REGION_KEYWORDS = {
+  seoul: ['서울'],
+  gyeonggi: ['경기', '판교', '성남', '수원', '용인', '화성', '고양', '안양', '부천'],
+  incheon: ['인천'],
+  gangwon: ['강원', '춘천', '원주', '강릉'],
+  daejeon: ['대전'],
+  sejong: ['세종'],
+  chungbuk: ['충북', '충청북도', '청주', '충주'],
+  chungnam: ['충남', '충청남도', '천안', '아산'],
+  jeonbuk: ['전북', '전라북도', '전주', '익산', '군산'],
+  jeonnam: ['전남', '전라남도', '광주', '목포', '여수', '순천'],
+  gwangju: ['광주'],
+  gyeongbuk: ['경북', '경상북도', '포항', '구미', '경주', '안동'],
+  gyeongnam: ['경남', '경상남도', '창원', '김해', '진주', '양산'],
+  daegu: ['대구'],
+  busan: ['부산'],
+  ulsan: ['울산'],
+  jeju: ['제주'],
+}
+
+// 모든 지역 키워드 (지역 제한 감지용)
+const ALL_REGION_KEYWORDS = Object.values(REGION_KEYWORDS).flat()
+
+// 지역 코드 -> 한글 이름 매핑
+const REGION_NAMES = {
+  seoul: '서울',
+  gyeonggi: '경기',
+  incheon: '인천',
+  gangwon: '강원',
+  daejeon: '대전',
+  sejong: '세종',
+  chungbuk: '충북',
+  chungnam: '충남',
+  jeonbuk: '전북',
+  jeonnam: '전남',
+  gwangju: '광주',
+  gyeongbuk: '경북',
+  gyeongnam: '경남',
+  daegu: '대구',
+  busan: '부산',
+  ulsan: '울산',
+  jeju: '제주',
+}
+
+/**
+ * 지역 코드를 한글 이름으로 변환
+ * @param {string} regionCode - 지역 코드 (예: 'seoul')
+ * @returns {string} 한글 지역명 (예: '서울')
+ */
+export function getRegionName(regionCode) {
+  return REGION_NAMES[regionCode] || regionCode
+}
+
+/**
+ * 공고에서 지역 제한 정보 추출
+ * @param {Object} announcement - 공고 객체
+ * @returns {Object} { type: 'nationwide' | 'restricted' | 'unknown', region?: string }
+ */
+export function extractRegionRestriction(announcement) {
+  const text = [
+    announcement.title || '',
+    announcement.summary || '',
+    announcement.organization || '',
+    (announcement.eligibility || []).join(' '),
+  ]
+    .join(' ')
+    .toLowerCase()
+
+  // 전국 대상 키워드 확인
+  if (
+    text.includes('전국') ||
+    text.includes('지역무관') ||
+    text.includes('지역 무관') ||
+    text.includes('전 지역')
+  ) {
+    return { type: 'nationwide' }
+  }
+
+  // 특정 지역 제한 패턴 확인
+  for (const [regionKey, keywords] of Object.entries(REGION_KEYWORDS)) {
+    for (const kw of keywords) {
+      // "XX 소재", "XX 지역", "XX시", "XX도" 등의 패턴
+      if (
+        text.includes(`${kw} 소재`) ||
+        text.includes(`${kw} 지역`) ||
+        text.includes(`${kw}시 `) ||
+        text.includes(`${kw}도 `) ||
+        text.includes(`${kw} 기업`) ||
+        text.includes(`${kw} 창업`) ||
+        text.includes(`${kw} 스타트업`) ||
+        text.includes(`${kw}지역`)
+      ) {
+        return { type: 'restricted', region: regionKey }
+      }
+    }
+  }
+
+  // 기관명에 지역이 포함된 경우 (예: "대구창조경제혁신센터")
+  const orgText = (announcement.organization || '').toLowerCase()
+  for (const [regionKey, keywords] of Object.entries(REGION_KEYWORDS)) {
+    for (const kw of keywords) {
+      if (orgText.includes(kw)) {
+        // 기관명에 지역이 있으면 해당 지역 우대 (단, 제한은 아님)
+        return { type: 'preferred', region: regionKey }
+      }
+    }
+  }
+
+  return { type: 'unknown' }
+}
+
 /**
  * 텍스트에서 키워드 매칭 점수 계산 (서비스 정보용)
  * @param {string} profileText - 프로필 텍스트 (businessOverview, targetMarket 등)
@@ -53,19 +165,19 @@ export function calculateMatchingScore(profile, announcement) {
   let score = 0
   let maxScore = 0
 
-  // 1. 관심 분야 매칭 (30점) - 기존 40점에서 조정
-  maxScore += 30
+  // 1. 관심 분야 매칭 (25점)
+  maxScore += 25
   if (profile.interests && profile.interests.length > 0 && announcement.category) {
     const matchedInterests = profile.interests.filter((interest) =>
       announcement.category.includes(interest)
     )
     if (matchedInterests.length > 0) {
-      score += Math.min(30, (matchedInterests.length / profile.interests.length) * 30)
+      score += Math.min(25, (matchedInterests.length / profile.interests.length) * 25)
     }
   }
 
-  // 2. 서비스 정보 키워드 매칭 (20점) - 새로 추가
-  maxScore += 20
+  // 2. 서비스 정보 키워드 매칭 (15점)
+  maxScore += 15
   const profileServiceText = [
     profile.serviceName || '',
     profile.businessOverview || '',
@@ -79,8 +191,8 @@ export function calculateMatchingScore(profile, announcement) {
 
   const textMatchCount = calculateTextMatchScore(profileServiceText, announcementText)
   if (textMatchCount > 0) {
-    // 최대 4개 키워드 매칭 시 만점
-    score += Math.min(20, textMatchCount * 5)
+    // 최대 3개 키워드 매칭 시 만점
+    score += Math.min(15, textMatchCount * 5)
   }
 
   // 3. 기업 형태 매칭 (15점) - 기존 20점에서 조정
@@ -122,24 +234,34 @@ export function calculateMatchingScore(profile, announcement) {
     }
   }
 
-  // 5. 지역 매칭 (10점)
-  maxScore += 10
-  if (profile.region && announcement.organization) {
-    const orgText = announcement.organization.toLowerCase()
-    const regionMatches = {
-      seoul: ['서울'],
-      gyeonggi: ['경기', '판교'],
-      gangwon: ['강원'],
-      incheon: ['인천'],
-    }
+  // 5. 지역 매칭 (15점) - 개선된 로직
+  maxScore += 15
+  if (profile.region) {
+    const regionRestriction = extractRegionRestriction(announcement)
 
-    const matchKeywords = regionMatches[profile.region] || []
-    // 지역 특화 사업이거나 전국 대상인 경우
-    if (
-      matchKeywords.some((kw) => orgText.includes(kw)) ||
-      !['서울', '경기', '강원', '인천', '부산', '대구'].some((r) => orgText.includes(r))
-    ) {
+    if (regionRestriction.type === 'nationwide') {
+      // 전국 대상 공고 - 기본 점수
       score += 10
+    } else if (regionRestriction.type === 'restricted') {
+      // 특정 지역 제한 공고
+      if (profile.region === regionRestriction.region) {
+        // 지역 일치 - 높은 점수
+        score += 15
+      } else {
+        // 지역 불일치 - 감점 (부적합 표시)
+        score -= 15
+      }
+    } else if (regionRestriction.type === 'preferred') {
+      // 기관 소재지 기반 우대
+      if (profile.region === regionRestriction.region) {
+        score += 12
+      } else {
+        // 다른 지역이어도 지원은 가능 - 기본 점수
+        score += 5
+      }
+    } else {
+      // 지역 정보 불명확 - 기본 점수
+      score += 8
     }
   }
 

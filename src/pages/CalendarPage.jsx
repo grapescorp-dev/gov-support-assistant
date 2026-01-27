@@ -12,6 +12,8 @@ import {
   formatDday,
   groupByMonth,
   formatMonthName,
+  extractRegionRestriction,
+  getRegionName,
 } from '../utils/matchingScore'
 import {
   Calendar,
@@ -29,6 +31,7 @@ import {
   UserCircle,
   ExternalLink,
   Loader2,
+  AlertTriangle,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
@@ -106,11 +109,21 @@ export function CalendarPage() {
 
   // 필터링된 공고 목록
   const filteredAnnouncements = useMemo(() => {
-    let filtered = announcements.map((announcement) => ({
-      ...announcement,
-      matchingScore: calculateMatchingScore(activeProfile, announcement),
-      dday: announcement.deadline ? calculateDday(announcement.deadline) : 999,
-    }))
+    let filtered = announcements.map((announcement) => {
+      const regionRestriction = extractRegionRestriction(announcement)
+      const isRegionMismatch =
+        activeProfile?.region &&
+        regionRestriction.type === 'restricted' &&
+        regionRestriction.region !== activeProfile.region
+
+      return {
+        ...announcement,
+        matchingScore: calculateMatchingScore(activeProfile, announcement),
+        dday: announcement.deadline ? calculateDday(announcement.deadline) : 999,
+        regionRestriction,
+        isRegionMismatch,
+      }
+    })
 
     // 연도 필터 (deadline이 있는 경우만)
     filtered = filtered.filter((a) => {
@@ -583,6 +596,20 @@ function AnnouncementCard({ announcement, darkMode, isBookmarked, onBookmarkTogg
           </span>
         ))}
       </div>
+
+      {/* 지역 불일치 경고 */}
+      {announcement.isRegionMismatch && (
+        <div className={`flex items-center gap-1.5 mt-2 px-2 py-1 rounded text-xs ${
+          darkMode
+            ? 'bg-orange-900/30 border border-orange-700 text-orange-300'
+            : 'bg-orange-50 border border-orange-200 text-orange-700'
+        }`}>
+          <AlertTriangle size={12} />
+          <span>
+            {getRegionName(announcement.regionRestriction.region)} 지역 기업 대상 공고입니다
+          </span>
+        </div>
+      )}
     </div>
   )
 }
