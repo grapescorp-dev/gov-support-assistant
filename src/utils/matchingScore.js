@@ -146,6 +146,20 @@ export function extractRegionRestriction(announcement) {
     return { type: 'nationwide' }
   }
 
+  // 제목에서 [지역명] 패턴 확인 (예: "[강원] 2026년...")
+  const titleText = (announcement.title || '').toLowerCase()
+  for (const [regionKey, regionData] of Object.entries(REGION_KEYWORDS)) {
+    for (const kw of regionData.main) {
+      if (titleText.includes(`[${kw}]`)) {
+        return {
+          type: 'restricted',
+          region: regionKey,
+          detectedCity: undefined,
+        }
+      }
+    }
+  }
+
   // 특정 지역 제한 패턴 확인 (시·도 및 시·군·구 단위)
   for (const [regionKey, regionData] of Object.entries(REGION_KEYWORDS)) {
     const allKeywords = getAllKeywordsForRegion(regionData)
@@ -175,6 +189,7 @@ export function extractRegionRestriction(announcement) {
         `${kw}경제진흥원`,
         `${kw}정보산업진흥원`,
         `${kw}콘텐츠진흥원`,
+        `도내 `, // "도내 농촌융복합인증" 등
       ]
 
       if (patterns.some((pattern) => text.includes(pattern))) {
