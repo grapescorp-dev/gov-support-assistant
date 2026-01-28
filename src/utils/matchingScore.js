@@ -81,6 +81,239 @@ function getAllKeywordsForRegion(regionData) {
   return keywords
 }
 
+// ==============================================
+// 유사어 매핑 (Synonym Mapping)
+// ==============================================
+const SYNONYMS = {
+  // 기업 형태 관련
+  중소기업: ['중소기업', '중소 기업', '중소벤처', 'sme', '중기업', '소기업'],
+  스타트업: ['스타트업', 'start-up', 'startup', '창업기업', '창업 기업', '신생기업'],
+  벤처: ['벤처', '벤처기업', '벤처 기업', 'venture'],
+  소상공인: ['소상공인', '소상 공인', '영세기업', '영세 기업'],
+  예비창업: ['예비창업', '예비 창업', '예비창업자', '예비 창업자', '창업예정', '창업 예정'],
+  개인사업자: ['개인사업자', '개인 사업자', '1인기업', '1인 기업', '개인기업'],
+
+  // 업력 관련
+  초기창업: ['초기창업', '초기 창업', '신규창업', '신규 창업', '창업초기', '창업 초기'],
+
+  // 인증 관련
+  벤처기업: ['벤처기업', '벤처 기업', '벤처기업인증', '벤처 인증'],
+  이노비즈: ['이노비즈', 'innobiz', 'inno-biz'],
+  메인비즈: ['메인비즈', 'mainbiz', 'main-biz'],
+  연구소: ['연구소', '기업부설연구소', '기업부설 연구소', '부설연구소', 'r&d센터'],
+  특허: ['특허', '지식재산권', '지식재산', '산업재산권', 'ip', 'patent'],
+
+  // 매출 관련
+  매출: ['매출', '매출액', '연매출', '연간매출', '매출규모', '연 매출'],
+
+  // 인원 관련
+  종업원: ['종업원', '상시근로자', '상시 근로자', '직원', '인원', '고용인원', '근로자'],
+}
+
+/**
+ * 유사어를 포함하여 텍스트에서 키워드 검색
+ * @param {string} text - 검색 대상 텍스트
+ * @param {string} keyword - 찾을 키워드
+ * @returns {boolean} 매칭 여부
+ */
+function matchWithSynonyms(text, keyword) {
+  const lowerText = text.toLowerCase()
+  const lowerKeyword = keyword.toLowerCase()
+
+  // 직접 매칭
+  if (lowerText.includes(lowerKeyword)) return true
+
+  // 유사어 매칭
+  for (const [key, synonyms] of Object.entries(SYNONYMS)) {
+    if (key === lowerKeyword || synonyms.some(s => s.toLowerCase() === lowerKeyword)) {
+      // 이 키워드의 유사어 그룹을 찾았으면, 모든 유사어로 검색
+      if (synonyms.some(s => lowerText.includes(s.toLowerCase()))) {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
+/**
+ * 유사어 배열로 검색 (여러 키워드 중 하나라도 매칭)
+ * @param {string} text - 검색 대상 텍스트
+ * @param {string[]} keywords - 찾을 키워드 배열
+ * @returns {boolean} 매칭 여부
+ */
+function matchAnyWithSynonyms(text, keywords) {
+  return keywords.some(kw => matchWithSynonyms(text, kw))
+}
+
+// ==============================================
+// 매출/인원 조건 추출 (Revenue/Employee Extraction)
+// ==============================================
+
+/**
+ * 텍스트에서 매출 조건 추출
+ * @param {string} text - 검색 대상 텍스트
+ * @returns {Object|null} { min?: number, max?: number, unit: 'billion' } (억 원 단위)
+ */
+function extractRevenueCondition(text) {
+  if (!text) return null
+
+  const patterns = [
+    // "매출 10억 이상", "매출액 50억 미만"
+    /매출[액]?\s*(\d+(?:\.\d+)?)\s*억\s*(이상|이하|미만|초과)?/g,
+    // "연매출 10억~50억", "매출 10~50억"
+    /매출[액]?\s*(\d+(?:\.\d+)?)\s*[~\-]\s*(\d+(?:\.\d+)?)\s*억/g,
+    // "매출 10억 원 이상"
+    /매출[액]?\s*(\d+(?:\.\d+)?)\s*억\s*원?\s*(이상|이하|미만|초과)?/g,
+  ]
+
+  let result = null
+
+  // 범위 패턴 먼저 확인
+  const rangeMatch = text.match(/매출[액]?\s*(\d+(?:\.\d+)?)\s*[~\-]\s*(\d+(?:\.\d+)?)\s*억/)
+  if (rangeMatch) {
+    return {
+      min: parseFloat(rangeMatch[1]),
+      max: parseFloat(rangeMatch[2]),
+      unit: 'billion'
+    }
+  }
+
+  // 단일 조건 패턴
+  const singleMatch = text.match(/매출[액]?\s*(\d+(?:\.\d+)?)\s*억\s*원?\s*(이상|이하|미만|초과)?/)
+  if (singleMatch) {
+    const value = parseFloat(singleMatch[1])
+    const condition = singleMatch[2] || '이상'
+
+    if (condition === '이상' || condition === '초과') {
+      result = { min: value, unit: 'billion' }
+    } else if (condition === '이하' || condition === '미만') {
+      result = { max: value, unit: 'billion' }
+    }
+  }
+
+  return result
+}
+
+/**
+ * 텍스트에서 종업원 수 조건 추출
+ * @param {string} text - 검색 대상 텍스트
+ * @returns {Object|null} { min?: number, max?: number }
+ */
+function extractEmployeeCondition(text) {
+  if (!text) return null
+
+  // 범위 패턴
+  const rangeMatch = text.match(/(상시근로자|종업원|직원|인원)\s*(\d+)\s*[~\-]\s*(\d+)\s*[명인]/)
+  if (rangeMatch) {
+    return {
+      min: parseInt(rangeMatch[2]),
+      max: parseInt(rangeMatch[3])
+    }
+  }
+
+  // 단일 조건 패턴
+  const patterns = [
+    // "상시근로자 5인 이상", "직원 10명 미만"
+    /(상시근로자|종업원|직원|인원|고용인원)\s*(\d+)\s*[명인]\s*(이상|이하|미만|초과)?/,
+    // "5인 이상 기업"
+    /(\d+)\s*[명인]\s*(이상|이하|미만|초과)\s*(기업|사업장)?/,
+  ]
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern)
+    if (match) {
+      // 패턴에 따라 숫자 위치가 다름
+      const numIndex = match[1].match(/^\d+$/) ? 1 : 2
+      const value = parseInt(match[numIndex])
+      const condIndex = numIndex === 1 ? 2 : 3
+      const condition = match[condIndex] || '이상'
+
+      if (condition === '이상' || condition === '초과') {
+        return { min: value }
+      } else if (condition === '이하' || condition === '미만') {
+        return { max: value }
+      }
+    }
+  }
+
+  return null
+}
+
+/**
+ * 프로필 매출 값을 숫자로 변환 (억 원 단위)
+ * @param {string} revenueValue - 프로필의 revenue 값
+ * @returns {Object} { min: number, max: number }
+ */
+function parseProfileRevenue(revenueValue) {
+  const mapping = {
+    none: { min: 0, max: 0 },
+    under1: { min: 0, max: 1 },
+    '1to10': { min: 1, max: 10 },
+    '10to50': { min: 10, max: 50 },
+    over50: { min: 50, max: Infinity },
+  }
+  return mapping[revenueValue] || { min: 0, max: 0 }
+}
+
+/**
+ * 프로필 종업원 수를 숫자로 변환
+ * @param {string} employeeValue - 프로필의 employees 값
+ * @returns {Object} { min: number, max: number }
+ */
+function parseProfileEmployees(employeeValue) {
+  const mapping = {
+    none: { min: 0, max: 0 },
+    '1to5': { min: 1, max: 5 },
+    '5to10': { min: 5, max: 10 },
+    '10to50': { min: 10, max: 50 },
+    over50: { min: 50, max: Infinity },
+  }
+  return mapping[employeeValue] || { min: 0, max: 0 }
+}
+
+/**
+ * 프로필이 공고의 매출 조건을 충족하는지 확인
+ * @param {Object} profileRevenue - { min, max }
+ * @param {Object} announcementCondition - { min?, max? }
+ * @returns {boolean}
+ */
+function meetsRevenueCondition(profileRevenue, announcementCondition) {
+  if (!announcementCondition) return true // 조건 없으면 통과
+
+  // 공고가 "매출 X억 이상" 요구 → 프로필 최소 매출이 X 이상이어야 함
+  if (announcementCondition.min !== undefined) {
+    if (profileRevenue.max < announcementCondition.min) return false
+  }
+
+  // 공고가 "매출 X억 이하/미만" 요구 → 프로필 최대 매출이 X 이하여야 함
+  if (announcementCondition.max !== undefined) {
+    if (profileRevenue.min > announcementCondition.max) return false
+  }
+
+  return true
+}
+
+/**
+ * 프로필이 공고의 종업원 조건을 충족하는지 확인
+ * @param {Object} profileEmployees - { min, max }
+ * @param {Object} announcementCondition - { min?, max? }
+ * @returns {boolean}
+ */
+function meetsEmployeeCondition(profileEmployees, announcementCondition) {
+  if (!announcementCondition) return true
+
+  if (announcementCondition.min !== undefined) {
+    if (profileEmployees.max < announcementCondition.min) return false
+  }
+
+  if (announcementCondition.max !== undefined) {
+    if (profileEmployees.min > announcementCondition.max) return false
+  }
+
+  return true
+}
+
 // 모든 지역 키워드 (지역 제한 감지용)
 const ALL_REGION_KEYWORDS = Object.values(REGION_KEYWORDS).flatMap((regionData) =>
   getAllKeywordsForRegion(regionData)
@@ -310,14 +543,14 @@ export function calculateMatchingScore(profile, announcement) {
   let score = 0
   let maxScore = 0
 
-  // 1. 관심 분야 매칭 (25점)
-  maxScore += 25
+  // 1. 관심 분야 매칭 (20점) - 비중 조정
+  maxScore += 20
   if (profile.interests && profile.interests.length > 0 && announcement.category) {
     const matchedInterests = profile.interests.filter((interest) =>
       announcement.category.includes(interest)
     )
     if (matchedInterests.length > 0) {
-      score += Math.min(25, (matchedInterests.length / profile.interests.length) * 25)
+      score += Math.min(20, (matchedInterests.length / profile.interests.length) * 20)
     }
   }
 
@@ -348,38 +581,39 @@ export function calculateMatchingScore(profile, announcement) {
     announcement.summary || '',
   ].join(' ').toLowerCase()
 
-  // 3. 기업 형태 매칭 (15점)
+  // 3. 기업 형태 매칭 (15점) - 유사어 매칭 적용
   maxScore += 15
   if (profile.companyType) {
     const typeMatches = {
-      preliminary: ['예비창업', '예비창업자', '예비 창업'],
-      sole: ['개인사업자', '1인기업', '소상공인', '1인 기업', '개인 사업자'],
-      sme: ['중소기업', '스타트업', '창업기업', '벤처', '중소 기업', '창업 기업'],
-      midsize: ['중견기업', '중견 기업'],
-      nonprofit: ['비영리', '사회적기업', '사회적 기업', '협동조합'],
+      preliminary: ['예비창업', '예비창업자'],
+      sole: ['개인사업자', '소상공인', '1인기업'],
+      sme: ['중소기업', '스타트업', '창업기업', '벤처'],
+      midsize: ['중견기업'],
+      nonprofit: ['비영리', '사회적기업', '협동조합'],
     }
 
     const matchKeywords = typeMatches[profile.companyType] || []
-    if (matchKeywords.some((kw) => fullSearchText.includes(kw))) {
+    // 유사어 매칭 사용
+    if (matchAnyWithSynonyms(fullSearchText, matchKeywords)) {
       score += 15
     }
   }
 
-  // 4. 업력 매칭 (15점)
+  // 4. 업력 매칭 (15점) - 유사어 매칭 적용
   maxScore += 15
   if (profile.businessAge) {
     const ageMatches = {
-      preliminary: ['예비창업', '예비 창업'],
-      under1: ['1년 미만', '초기창업', '초기 창업', '1년미만'],
-      '1to3': ['3년 미만', '3년 이내', '초기창업', '초기 창업', '3년미만', '3년이내'],
-      '3to7': ['7년 미만', '7년 이내', '성장단계', '성장 단계', '7년미만', '7년이내', '5년 이내', '5년이내'],
+      preliminary: ['예비창업'],
+      under1: ['1년 미만', '초기창업', '1년미만'],
+      '1to3': ['3년 미만', '3년 이내', '초기창업', '3년미만', '3년이내'],
+      '3to7': ['7년 미만', '7년 이내', '성장단계', '7년미만', '7년이내', '5년 이내', '5년이내'],
       over7: [], // 대부분 지원 가능
     }
 
     const matchKeywords = ageMatches[profile.businessAge] || []
     if (
       profile.businessAge === 'over7' ||
-      matchKeywords.some((kw) => fullSearchText.includes(kw))
+      matchAnyWithSynonyms(fullSearchText, matchKeywords)
     ) {
       score += 15
     }
@@ -416,26 +650,68 @@ export function calculateMatchingScore(profile, announcement) {
     }
   }
 
-  // 6. 인증 보유 시 가산점 (15점)
-  maxScore += 15
+  // 6. 인증 보유 시 가산점 (10점) - 비중 조정, 유사어 매칭 적용
+  maxScore += 10
   if (profile.certifications && profile.certifications.length > 0) {
     const certMatches = {
-      venture: ['벤처', '벤처기업', '벤처 기업'],
-      innobiz: ['이노비즈', 'innobiz'],
-      mainbiz: ['메인비즈', 'mainbiz'],
-      research: ['연구소', '기업부설연구소', '기업부설 연구소', '부설연구소'],
-      patent: ['특허', '지식재산권', '지식재산', 'ip'],
+      venture: ['벤처기업'],
+      innobiz: ['이노비즈'],
+      mainbiz: ['메인비즈'],
+      research: ['연구소'],
+      patent: ['특허'],
     }
 
     let certScore = 0
     profile.certifications.forEach((cert) => {
       const keywords = certMatches[cert] || []
-      // fullSearchText 사용 (title + summary + eligibility 통합)
-      if (keywords.some((kw) => fullSearchText.includes(kw))) {
-        certScore += 5
+      // 유사어 매칭 사용
+      if (matchAnyWithSynonyms(fullSearchText, keywords)) {
+        certScore += 3.3
       }
     })
-    score += Math.min(15, certScore)
+    score += Math.min(10, certScore)
+  }
+
+  // 7. 매출/인원 조건 매칭 (10점) - 신규 추가
+  maxScore += 10
+  const revenueCondition = extractRevenueCondition(fullSearchText)
+  const employeeCondition = extractEmployeeCondition(fullSearchText)
+
+  if (revenueCondition || employeeCondition) {
+    let conditionScore = 0
+
+    // 매출 조건 확인
+    if (revenueCondition && profile.revenue) {
+      const profileRevenue = parseProfileRevenue(profile.revenue)
+      if (meetsRevenueCondition(profileRevenue, revenueCondition)) {
+        conditionScore += 5
+      } else {
+        // 조건 미충족 시 감점
+        conditionScore -= 5
+      }
+    } else if (!revenueCondition) {
+      // 매출 조건 없으면 기본 점수
+      conditionScore += 2.5
+    }
+
+    // 인원 조건 확인
+    if (employeeCondition && profile.employees) {
+      const profileEmployees = parseProfileEmployees(profile.employees)
+      if (meetsEmployeeCondition(profileEmployees, employeeCondition)) {
+        conditionScore += 5
+      } else {
+        // 조건 미충족 시 감점
+        conditionScore -= 5
+      }
+    } else if (!employeeCondition) {
+      // 인원 조건 없으면 기본 점수
+      conditionScore += 2.5
+    }
+
+    score += conditionScore
+  } else {
+    // 매출/인원 조건이 공고에 없으면 기본 점수
+    score += 5
   }
 
   // 최종 점수 계산 (0-100)
