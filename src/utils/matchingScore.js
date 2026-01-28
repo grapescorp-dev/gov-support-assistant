@@ -127,6 +127,7 @@ export function getRegionName(regionCode, detectedCity) {
  * @returns {Object} { type: 'nationwide' | 'restricted' | 'unknown', region?: string, detectedCity?: string }
  */
 export function extractRegionRestriction(announcement) {
+  // hashTags 제외 - 모든 지역이 나열되어 있어 신뢰도 낮음
   const text = [
     announcement.title || '',
     announcement.summary || '',
@@ -160,19 +161,45 @@ export function extractRegionRestriction(announcement) {
     }
   }
 
-  // 특정 지역 제한 패턴 확인 (시·도 및 시·군·구 단위)
+  // 1단계: 가장 구체적인 패턴 먼저 확인 (특별자치도/시, ~에 본사 등)
+  for (const [regionKey, regionData] of Object.entries(REGION_KEYWORDS)) {
+    for (const kw of regionData.main) {
+      const specificPatterns = [
+        `${kw}특별자치도`, // "전북특별자치도"
+        `${kw}특별자치시`, // "세종특별자치시"
+        `${kw}특별시`, // "서울특별시"
+        `${kw}광역시`, // "부산광역시"
+        `${kw}에 본사`, // "전북에 본사"
+        `${kw}에 사업장`, // "전북에 사업장"
+        `${kw}에 연구소`,
+        `${kw}에 공장`,
+        `${kw} 소재기업`, // "전북 소재기업"
+        `${kw} 소재 기업`,
+      ]
+
+      if (specificPatterns.some((pattern) => text.includes(pattern))) {
+        return {
+          type: 'restricted',
+          region: regionKey,
+          detectedCity: undefined,
+        }
+      }
+    }
+  }
+
+  // 2단계: 일반적인 지역 제한 패턴 확인
   for (const [regionKey, regionData] of Object.entries(REGION_KEYWORDS)) {
     const allKeywords = getAllKeywordsForRegion(regionData)
 
     for (const kw of allKeywords) {
-      // 다양한 지역 제한 패턴 확인
+      // 다양한 지역 제한 패턴 확인 (도내 패턴 제거 - 너무 일반적)
       const patterns = [
         `${kw} 소재`,
         `${kw} 지역`,
-        `${kw}시 `,
-        `${kw}도 `,
-        `${kw}군 `,
-        `${kw}구 `,
+        `${kw}시 소재`,
+        `${kw}도 소재`,
+        `${kw}군 소재`,
+        `${kw}구 소재`,
         `${kw} 기업`,
         `${kw} 창업`,
         `${kw} 스타트업`,
@@ -189,24 +216,15 @@ export function extractRegionRestriction(announcement) {
         `${kw}경제진흥원`,
         `${kw}정보산업진흥원`,
         `${kw}콘텐츠진흥원`,
-        `${kw}특별자치도`, // "전북특별자치도", "강원특별자치도" 등
-        `${kw}특별자치도 소재`, // "전북특별자치도 소재" 등
-        `${kw}특별자치도 내`, // "전북특별자치도 내에" 등
-        `${kw}특별자치시`, // "세종특별자치시" 등
-        `${kw}특별자치시 소재`, // "세종특별자치시 소재" 등
-        `${kw}특별자치시 내`, // "세종특별자치시 내에" 등
-        `${kw}특별시`, // "서울특별시" 등
-        `${kw}특별시 소재`, // "서울특별시 소재" 등
-        `${kw}특별시 내`, // "서울특별시 내에" 등
-        `${kw}광역시`, // "부산광역시" 등
-        `${kw}광역시 소재`, // "부산광역시 소재" 등
-        `${kw}광역시 내`, // "부산광역시 내에" 등
-        `${kw}도 소재`, // "경기도 소재" 등
-        `${kw}에 본사`, // "전북에 본사" 등
-        `${kw}에 사업장`, // "전북에 사업장" 등
-        `${kw}에 연구소`, // "전북에 연구소" 등
-        `${kw}에 공장`, // "전북에 공장" 등
-        `도내 `, // "도내 농촌융복합인증" 등
+        `${kw}바이오`, // "전북바이오융합산업진흥원" 등
+        `${kw}특별자치도 소재`,
+        `${kw}특별자치도 내`,
+        `${kw}특별자치시 소재`,
+        `${kw}특별자치시 내`,
+        `${kw}특별시 소재`,
+        `${kw}특별시 내`,
+        `${kw}광역시 소재`,
+        `${kw}광역시 내`,
       ]
 
       if (patterns.some((pattern) => text.includes(pattern))) {
@@ -219,7 +237,7 @@ export function extractRegionRestriction(announcement) {
     }
   }
 
-  // 기관명에 지역이 포함된 경우 - 지역 제한 공고로 처리
+  // 3단계: 기관명에 지역이 포함된 경우 - 지역 제한 공고로 처리
   // (예: "강원테크노파크", "대구창조경제혁신센터", "김포시청")
   const orgText = (announcement.organization || '').toLowerCase()
   for (const [regionKey, regionData] of Object.entries(REGION_KEYWORDS)) {
@@ -227,7 +245,6 @@ export function extractRegionRestriction(announcement) {
 
     for (const kw of allKeywords) {
       if (orgText.includes(kw)) {
-        // 지역 기관에서 운영하는 사업은 해당 지역 제한으로 간주
         return {
           type: 'restricted',
           region: regionKey,
