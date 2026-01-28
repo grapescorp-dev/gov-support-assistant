@@ -606,7 +606,7 @@ function AnnouncementCard({ announcement, darkMode, isBookmarked, onBookmarkTogg
         }`}>
           <AlertTriangle size={12} />
           <span>
-            {getRegionName(announcement.regionRestriction.region, announcement.regionRestriction.detectedCity)} 지역 기업 대상 공고입니다
+            {getRegionName(announcement.regionRestriction.region, announcement.regionRestriction.detectedCity)} 지역 관련 공고입니다 (지원 자격을 확인하세요)
           </span>
         </div>
       )}
