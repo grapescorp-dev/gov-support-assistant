@@ -4,27 +4,27 @@
 // 시·도 + 주요 시·군 단위까지 포함
 const REGION_KEYWORDS = {
   seoul: {
-    main: ['서울'],
+    main: ['서울', '서울특별시'],
     districts: ['강남', '서초', '송파', '강동', '마포', '영등포', '구로', '금천', '관악', '동작', '용산', '종로', '중구', '성동', '광진', '동대문', '중랑', '성북', '강북', '도봉', '노원', '은평', '서대문', '양천', '강서'],
   },
   gyeonggi: {
-    main: ['경기'],
+    main: ['경기', '경기도'],
     cities: ['성남', '수원', '용인', '화성', '고양', '안양', '부천', '평택', '김포', '파주', '양주', '광주', '하남', '의정부', '시흥', '안산', '군포', '의왕', '과천', '오산', '이천', '여주', '양평', '가평', '포천', '동두천', '연천', '광명', '안성', '구리', '남양주'],
   },
   incheon: {
-    main: ['인천'],
+    main: ['인천', '인천광역시'],
     districts: ['중구', '동구', '미추홀', '연수', '남동', '부평', '계양', '서구', '강화', '옹진'],
   },
   gangwon: {
-    main: ['강원'],
+    main: ['강원', '강원도', '강원특별자치도'],
     cities: ['춘천', '원주', '강릉', '동해', '태백', '속초', '삼척', '홍천', '횡성', '영월', '평창', '정선', '철원', '화천', '양구', '인제', '고성', '양양'],
   },
   daejeon: {
-    main: ['대전'],
+    main: ['대전', '대전광역시'],
     districts: ['동구', '중구', '서구', '유성', '대덕'],
   },
   sejong: {
-    main: ['세종'],
+    main: ['세종', '세종특별자치시'],
     districts: [],
   },
   chungbuk: {
@@ -36,7 +36,7 @@ const REGION_KEYWORDS = {
     cities: ['천안', '아산', '공주', '보령', '서산', '논산', '계룡', '당진', '금산', '부여', '서천', '청양', '홍성', '예산', '태안'],
   },
   jeonbuk: {
-    main: ['전북', '전라북도'],
+    main: ['전북', '전라북도', '전북특별자치도'],
     cities: ['전주', '익산', '군산', '정읍', '남원', '김제', '완주', '진안', '무주', '장수', '임실', '순창', '고창', '부안'],
   },
   jeonnam: {
@@ -44,7 +44,7 @@ const REGION_KEYWORDS = {
     cities: ['목포', '여수', '순천', '나주', '광양', '담양', '곡성', '구례', '고흥', '보성', '화순', '장흥', '강진', '해남', '영암', '무안', '함평', '영광', '장성', '완도', '진도', '신안'],
   },
   gwangju: {
-    main: ['광주'],
+    main: ['광주', '광주광역시'],
     districts: ['동구', '서구', '남구', '북구', '광산'],
   },
   gyeongbuk: {
@@ -56,19 +56,19 @@ const REGION_KEYWORDS = {
     cities: ['창원', '김해', '진주', '양산', '거제', '통영', '사천', '밀양', '함안', '거창', '창녕', '고성', '하동', '합천', '남해', '함양', '산청', '의령'],
   },
   daegu: {
-    main: ['대구'],
+    main: ['대구', '대구광역시'],
     districts: ['중구', '동구', '서구', '남구', '북구', '수성', '달서', '달성', '군위'],
   },
   busan: {
-    main: ['부산'],
+    main: ['부산', '부산광역시'],
     districts: ['중구', '서구', '동구', '영도', '부산진', '동래', '남구', '북구', '해운대', '사하', '금정', '강서', '연제', '수영', '사상', '기장'],
   },
   ulsan: {
-    main: ['울산'],
+    main: ['울산', '울산광역시'],
     districts: ['중구', '남구', '동구', '북구', '울주'],
   },
   jeju: {
-    main: ['제주'],
+    main: ['제주', '제주특별자치도'],
     cities: ['서귀포'],
   },
 }
@@ -151,40 +151,55 @@ export function extractRegionRestriction(announcement) {
     const allKeywords = getAllKeywordsForRegion(regionData)
 
     for (const kw of allKeywords) {
-      // "XX 소재", "XX 지역", "XX시", "XX도", "XX군", "XX구" 등의 패턴
-      if (
-        text.includes(`${kw} 소재`) ||
-        text.includes(`${kw} 지역`) ||
-        text.includes(`${kw}시 `) ||
-        text.includes(`${kw}도 `) ||
-        text.includes(`${kw}군 `) ||
-        text.includes(`${kw}구 `) ||
-        text.includes(`${kw} 기업`) ||
-        text.includes(`${kw} 창업`) ||
-        text.includes(`${kw} 스타트업`) ||
-        text.includes(`${kw}지역`)
-      ) {
+      // 다양한 지역 제한 패턴 확인
+      const patterns = [
+        `${kw} 소재`,
+        `${kw} 지역`,
+        `${kw}시 `,
+        `${kw}도 `,
+        `${kw}군 `,
+        `${kw}구 `,
+        `${kw} 기업`,
+        `${kw} 창업`,
+        `${kw} 스타트업`,
+        `${kw}지역`,
+        `${kw}내 `,
+        `${kw} 내 `,
+        `${kw}도내`,
+        `${kw} 도내`,
+        `${kw} 중소기업`,
+        `${kw} 소상공인`,
+        `${kw} 벤처`,
+        `${kw}테크노파크`,
+        `${kw}창조경제`,
+        `${kw}경제진흥원`,
+        `${kw}정보산업진흥원`,
+        `${kw}콘텐츠진흥원`,
+      ]
+
+      if (patterns.some((pattern) => text.includes(pattern))) {
         return {
           type: 'restricted',
           region: regionKey,
-          detectedCity: kw !== regionData.main[0] ? kw : undefined
+          detectedCity: !regionData.main.includes(kw) ? kw : undefined,
         }
       }
     }
   }
 
-  // 기관명에 지역이 포함된 경우 (예: "대구창조경제혁신센터", "김포시청")
+  // 기관명에 지역이 포함된 경우 - 지역 제한 공고로 처리
+  // (예: "강원테크노파크", "대구창조경제혁신센터", "김포시청")
   const orgText = (announcement.organization || '').toLowerCase()
   for (const [regionKey, regionData] of Object.entries(REGION_KEYWORDS)) {
     const allKeywords = getAllKeywordsForRegion(regionData)
 
     for (const kw of allKeywords) {
       if (orgText.includes(kw)) {
-        // 기관명에 지역이 있으면 해당 지역 우대 (단, 제한은 아님)
+        // 지역 기관에서 운영하는 사업은 해당 지역 제한으로 간주
         return {
-          type: 'preferred',
+          type: 'restricted',
           region: regionKey,
-          detectedCity: kw !== regionData.main[0] ? kw : undefined
+          detectedCity: !regionData.main.includes(kw) ? kw : undefined,
         }
       }
     }
