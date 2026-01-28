@@ -323,40 +323,46 @@ export function calculateMatchingScore(profile, announcement) {
     score += Math.min(15, textMatchCount * 5)
   }
 
-  // 3. 기업 형태 매칭 (15점) - 기존 20점에서 조정
+  // 통합 검색 텍스트 생성 (eligibility + title + summary)
+  // K-Startup, MSS는 eligibility가 비어있으므로 title/summary에서 검색
+  const fullSearchText = [
+    ...(announcement.eligibility || []),
+    announcement.title || '',
+    announcement.summary || '',
+  ].join(' ').toLowerCase()
+
+  // 3. 기업 형태 매칭 (15점)
   maxScore += 15
-  if (profile.companyType && announcement.eligibility) {
-    const eligibilityText = announcement.eligibility.join(' ').toLowerCase()
+  if (profile.companyType) {
     const typeMatches = {
-      preliminary: ['예비창업', '예비창업자'],
-      sole: ['개인사업자', '1인기업', '소상공인'],
-      sme: ['중소기업', '스타트업', '창업기업', '벤처'],
-      midsize: ['중견기업'],
-      nonprofit: ['비영리', '사회적기업'],
+      preliminary: ['예비창업', '예비창업자', '예비 창업'],
+      sole: ['개인사업자', '1인기업', '소상공인', '1인 기업', '개인 사업자'],
+      sme: ['중소기업', '스타트업', '창업기업', '벤처', '중소 기업', '창업 기업'],
+      midsize: ['중견기업', '중견 기업'],
+      nonprofit: ['비영리', '사회적기업', '사회적 기업', '협동조합'],
     }
 
     const matchKeywords = typeMatches[profile.companyType] || []
-    if (matchKeywords.some((kw) => eligibilityText.includes(kw))) {
+    if (matchKeywords.some((kw) => fullSearchText.includes(kw))) {
       score += 15
     }
   }
 
   // 4. 업력 매칭 (15점)
   maxScore += 15
-  if (profile.businessAge && announcement.eligibility) {
-    const eligibilityText = announcement.eligibility.join(' ').toLowerCase()
+  if (profile.businessAge) {
     const ageMatches = {
-      preliminary: ['예비창업'],
-      under1: ['1년 미만', '초기창업'],
-      '1to3': ['3년 미만', '3년 이내', '초기창업'],
-      '3to7': ['7년 미만', '7년 이내', '성장단계'],
+      preliminary: ['예비창업', '예비 창업'],
+      under1: ['1년 미만', '초기창업', '초기 창업', '1년미만'],
+      '1to3': ['3년 미만', '3년 이내', '초기창업', '초기 창업', '3년미만', '3년이내'],
+      '3to7': ['7년 미만', '7년 이내', '성장단계', '성장 단계', '7년미만', '7년이내', '5년 이내', '5년이내'],
       over7: [], // 대부분 지원 가능
     }
 
     const matchKeywords = ageMatches[profile.businessAge] || []
     if (
       profile.businessAge === 'over7' ||
-      matchKeywords.some((kw) => eligibilityText.includes(kw))
+      matchKeywords.some((kw) => fullSearchText.includes(kw))
     ) {
       score += 15
     }
@@ -396,19 +402,19 @@ export function calculateMatchingScore(profile, announcement) {
   // 6. 인증 보유 시 가산점 (15점)
   maxScore += 15
   if (profile.certifications && profile.certifications.length > 0) {
-    const eligibilityText = (announcement.eligibility || []).join(' ').toLowerCase()
     const certMatches = {
-      venture: ['벤처', '벤처기업'],
-      innobiz: ['이노비즈'],
-      mainbiz: ['메인비즈'],
-      research: ['연구소', '기업부설연구소'],
-      patent: ['특허', '지식재산권'],
+      venture: ['벤처', '벤처기업', '벤처 기업'],
+      innobiz: ['이노비즈', 'innobiz'],
+      mainbiz: ['메인비즈', 'mainbiz'],
+      research: ['연구소', '기업부설연구소', '기업부설 연구소', '부설연구소'],
+      patent: ['특허', '지식재산권', '지식재산', 'ip'],
     }
 
     let certScore = 0
     profile.certifications.forEach((cert) => {
       const keywords = certMatches[cert] || []
-      if (keywords.some((kw) => eligibilityText.includes(kw))) {
+      // fullSearchText 사용 (title + summary + eligibility 통합)
+      if (keywords.some((kw) => fullSearchText.includes(kw))) {
         certScore += 5
       }
     })
