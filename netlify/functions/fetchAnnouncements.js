@@ -720,7 +720,7 @@ export async function handler(event) {
     }
 
     // ===============
-    // 1) 기업마당 호출 (타임아웃 8초)
+    // 1) 기업마당 호출 (타임아웃 15초, 재시도 2회)
     // ===============
     let bizinfoItems = []
     let bizinfoError = null
@@ -732,25 +732,33 @@ export async function handler(event) {
         searchCnt: '100',
       })
 
-      try {
-        console.log('[Bizinfo API] Fetching from API...')
-        const bizinfoResponse = await fetchWithTimeout(
-          `${BIZINFO_API_URL}?${bizinfoParams}`,
-          {},
-          8000
-        )
-        if (!bizinfoResponse.ok) {
-          throw new Error(
-            `Bizinfo API request failed: ${bizinfoResponse.status} ${bizinfoResponse.statusText}`
+      const maxRetries = 2
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          console.log(`[Bizinfo API] Fetching from API... (attempt ${attempt}/${maxRetries})`)
+          const bizinfoResponse = await fetchWithTimeout(
+            `${BIZINFO_API_URL}?${bizinfoParams}`,
+            {},
+            15000 // 15초로 타임아웃 증가
           )
-        }
+          if (!bizinfoResponse.ok) {
+            throw new Error(
+              `Bizinfo API request failed: ${bizinfoResponse.status} ${bizinfoResponse.statusText}`
+            )
+          }
 
-        const bizinfoData = await bizinfoResponse.json()
-        bizinfoItems = extractItemsFromApiResponse(bizinfoData)
-      } catch (e) {
-        bizinfoError = e
-        console.error('[Bizinfo API Error]', e.message)
-        bizinfoItems = []
+          const bizinfoData = await bizinfoResponse.json()
+          bizinfoItems = extractItemsFromApiResponse(bizinfoData)
+          bizinfoError = null // 성공 시 에러 초기화
+          break // 성공하면 루프 종료
+        } catch (e) {
+          bizinfoError = e
+          console.error(`[Bizinfo API Error] Attempt ${attempt}:`, e.message)
+          if (attempt < maxRetries) {
+            // 재시도 전 1초 대기
+            await new Promise((resolve) => setTimeout(resolve, 1000))
+          }
+        }
       }
     }
 
