@@ -208,6 +208,40 @@ const extractCategoriesFromText = (text) => {
     categories.push('창업')
   }
 
+  // 수출 관련 키워드
+  if (
+    lowerText.includes('수출') ||
+    lowerText.includes('해외진출') ||
+    lowerText.includes('해외 진출') ||
+    lowerText.includes('글로벌') ||
+    lowerText.includes('무역') ||
+    lowerText.includes('바이어') ||
+    lowerText.includes('수출바우처') ||
+    lowerText.includes('해외마케팅') ||
+    lowerText.includes('해외 마케팅') ||
+    lowerText.includes('현지화') ||
+    lowerText.includes('fta')
+  ) {
+    categories.push('수출')
+  }
+
+  // R&D 관련 키워드
+  if (
+    lowerText.includes('r&d') ||
+    lowerText.includes('연구개발') ||
+    lowerText.includes('연구 개발') ||
+    lowerText.includes('기술개발') ||
+    lowerText.includes('기술 개발') ||
+    lowerText.includes('과제') ||
+    lowerText.includes('연구비') ||
+    lowerText.includes('기초연구') ||
+    lowerText.includes('응용연구') ||
+    lowerText.includes('산학협력') ||
+    lowerText.includes('기업부설연구소')
+  ) {
+    categories.push('R&D')
+  }
+
   return [...new Set(categories)] // 중복 제거
 }
 

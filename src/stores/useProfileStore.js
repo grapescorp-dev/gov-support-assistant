@@ -215,13 +215,21 @@ export const BUSINESS_AGES = [
 export const REGIONS = [
   { value: 'seoul', label: '서울' },
   { value: 'gyeonggi', label: '경기' },
-  { value: 'gangwon', label: '강원' },
   { value: 'incheon', label: '인천' },
-  { value: 'busan', label: '부산' },
-  { value: 'daegu', label: '대구' },
+  { value: 'gangwon', label: '강원' },
   { value: 'daejeon', label: '대전' },
+  { value: 'sejong', label: '세종' },
+  { value: 'chungbuk', label: '충북' },
+  { value: 'chungnam', label: '충남' },
+  { value: 'jeonbuk', label: '전북' },
+  { value: 'jeonnam', label: '전남' },
   { value: 'gwangju', label: '광주' },
-  { value: 'other', label: '기타' },
+  { value: 'gyeongbuk', label: '경북' },
+  { value: 'gyeongnam', label: '경남' },
+  { value: 'daegu', label: '대구' },
+  { value: 'busan', label: '부산' },
+  { value: 'ulsan', label: '울산' },
+  { value: 'jeju', label: '제주' },
 ]
 
 export const REVENUES = [
