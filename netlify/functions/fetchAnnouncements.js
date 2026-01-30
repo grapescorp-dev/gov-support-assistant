@@ -36,6 +36,8 @@ const fallbackMockData = [
     link: 'https://www.bizinfo.go.kr',
     summary: 'AI 기술을 활용한 제품/서비스 개발 중소기업 지원 (API 연결 대기 중 - mock 데이터)',
     source: 'mock',
+    type: 'funding',
+    tags: ['R&D', '중소기업', 'AI/데이터'],
   },
   {
     id: 'mock-002',
@@ -48,6 +50,8 @@ const fallbackMockData = [
     link: 'https://www.k-startup.go.kr',
     summary: '예비창업자 및 초기 스타트업 대상 사업화 자금 지원 (API 연결 대기 중 - mock 데이터)',
     source: 'mock',
+    type: 'funding',
+    tags: ['창업/스타트업', '바우처/이용권'],
   },
   {
     id: 'mock-003',
@@ -60,6 +64,8 @@ const fallbackMockData = [
     link: 'https://www.kocca.kr',
     summary: '콘텐츠 제작 및 유통 지원 (API 연결 대기 중 - mock 데이터)',
     source: 'mock',
+    type: 'funding',
+    tags: ['콘텐츠/미디어', '중소기업'],
   },
 ]
 
@@ -103,6 +109,155 @@ const mapToOurCategory = (lcategory) => {
   }
   return categoryMapping[lcategory] || []
 }
+
+// ==============================================
+// 공고 타입 및 태그 분류 시스템
+// ==============================================
+
+// 확정된 태그 목록 (12개)
+const VALID_TAGS = [
+  'R&D',
+  '수출/해외진출',
+  '창업/스타트업',
+  '소상공인',
+  '중소기업',
+  '투자/IR',
+  '교육/세미나',
+  '전시/로드쇼',
+  '데모데이/피칭',
+  '바우처/이용권',
+  '입주/공간',
+  '컨설팅/멘토링',
+  '디지털전환',
+  '제조/스마트공장',
+  'AI/데이터',
+  '콘텐츠/미디어',
+]
+
+// 행사형 하위 분류용 태그
+const EVENT_SUB_TAGS = ['전시/로드쇼', '교육/세미나', '투자/IR', '데모데이/피칭']
+
+// 행사(event) 타입 판별 키워드
+const EVENT_KEYWORDS = [
+  '전시', '박람회', 'expo', '로드쇼', '상담회', '바이어', '밋업', '네트워킹',
+  '세미나', '교육', '특강', '아카데미', '워크숍', '캠프', '원데이',
+  '데모데이', 'demo day', 'demoday', 'ir', '피칭', 'pitching', 'showcase',
+  '컨퍼런스', '포럼', '설명회', '간담회'
+]
+
+// 안내(info) 타입 판별 키워드
+const INFO_KEYWORDS = [
+  '안내', '공지', '갱신', '변경', '연장', '정정', '취소', '재공고',
+  '결과 발표', '선정 결과', '확인 안내'
+]
+
+// 태그 분류 규칙 (키워드 → 태그)
+const TAG_RULES = {
+  'R&D': ['r&d', '연구개발', '기술개발', '과제', '주관연구', '공동연구', '연구개발비', '기술혁신'],
+  '수출/해외진출': ['수출', '해외', '글로벌', '현지', '바이어', '진출', '로드쇼', 'kotra', '무역', '해외마케팅'],
+  '창업/스타트업': ['창업', '스타트업', '초기창업', '도약', '예비창업', '액셀러레이터', '팁스', 'tips', '벤처'],
+  '소상공인': ['소상공인', '스마트상점', '전통시장', '소공인', '영세'],
+  '중소기업': ['중소기업', 'sme', '중견기업'],
+  '투자/IR': ['투자', 'ir', 'vc', '투자유치', '엔젤', '시드'],
+  '교육/세미나': ['세미나', '교육', '특강', '아카데미', '워크숍', '캠프', '원데이', '강좌', '연수'],
+  '전시/로드쇼': ['전시', '박람회', 'expo', '로드쇼', '상담회', '바이어상담', '밋업', '네트워킹'],
+  '데모데이/피칭': ['데모데이', 'demo day', 'demoday', '피칭', 'pitching', 'showcase', '발표대회'],
+  '바우처/이용권': ['바우처', '이용권', '쿠폰', '포인트'],
+  '입주/공간': ['입주', '공간', '센터', '사무실', '보육', '인큐베이팅', '창업공간'],
+  '컨설팅/멘토링': ['컨설팅', '멘토링', '코칭', '자문', '진단'],
+  '디지털전환': ['디지털 전환', '디지털전환', 'dx', 'ax', '클라우드', 'ai 전환', '스마트화'],
+  '제조/스마트공장': ['스마트공장', '제조', '공장', '고도화', '자동화', '생산성'],
+  'AI/데이터': ['ai', '인공지능', '머신러닝', '데이터', '빅데이터', '딥러닝'],
+  '콘텐츠/미디어': ['콘텐츠', '미디어', '영상', '게임', '음악', 'k-pop', 'kpop', '웹툰', '애니메이션', '방송'],
+}
+
+/**
+ * 공고 타입 판별 (funding | event | info | unknown)
+ * @param {Object} item - 공고 객체
+ * @returns {string} 타입
+ */
+const determineAnnouncementType = (item) => {
+  const searchText = [
+    item.title || '',
+    item.summary || '',
+    (item.eligibility || []).join(' '),
+    item.organization || '',
+  ].join(' ').toLowerCase()
+
+  // 1. info 타입 체크 (순수 안내성)
+  const hasInfoKeyword = INFO_KEYWORDS.some(kw => searchText.includes(kw))
+  const hasFundingKeyword = ['지원', '모집', '선정', '사업화', '자금', '비용 지원', '구축'].some(kw => searchText.includes(kw))
+
+  if (hasInfoKeyword && !hasFundingKeyword) {
+    return 'info'
+  }
+
+  // 2. event 타입 체크 (행사형)
+  const hasEventKeyword = EVENT_KEYWORDS.some(kw => searchText.includes(kw))
+  if (hasEventKeyword) {
+    // 행사 키워드가 강하게 있고, 지원금 성격이 아닌 경우
+    const strongEventPatterns = [
+      '참가', '참여', '신청', '개최', '행사', '일정',
+      '세미나 안내', '교육 안내', '전시회', '박람회 참가'
+    ]
+    const isStrongEvent = strongEventPatterns.some(p => searchText.includes(p))
+
+    if (isStrongEvent || !hasFundingKeyword) {
+      return 'event'
+    }
+  }
+
+  // 3. funding 타입 (기본값)
+  return 'funding'
+}
+
+/**
+ * 공고에서 태그 추출 (최대 5개)
+ * @param {Object} item - 공고 객체
+ * @returns {string[]} 태그 배열
+ */
+const extractTags = (item) => {
+  const searchText = [
+    item.title || '',
+    item.summary || '',
+    (item.eligibility || []).join(' '),
+    item.organization || '',
+    item.hashTags || '',
+  ].join(' ').toLowerCase()
+
+  const matchedTags = []
+
+  // 태그 규칙에 따라 매칭
+  for (const [tag, keywords] of Object.entries(TAG_RULES)) {
+    if (keywords.some(kw => searchText.includes(kw))) {
+      matchedTags.push(tag)
+    }
+  }
+
+  // 중복 제거 및 최대 5개로 제한
+  const uniqueTags = [...new Set(matchedTags)]
+  return uniqueTags.slice(0, 5)
+}
+
+/**
+ * 공고에 type과 tags 필드 추가
+ * @param {Object} item - 변환된 공고 객체
+ * @returns {Object} type과 tags가 추가된 공고 객체
+ */
+const enrichWithTypeAndTags = (item) => {
+  const type = determineAnnouncementType(item)
+  const tags = extractTags(item)
+
+  return {
+    ...item,
+    type,
+    tags,
+  }
+}
+
+// ==============================================
+// 기존 카테고리 추출 함수 (유지)
+// ==============================================
 
 // 텍스트에서 카테고리 키워드 추출 (제목, 설명, 해시태그 등)
 const extractCategoriesFromText = (text) => {
@@ -341,7 +496,7 @@ const transformApiResponse = (items) => {
 
     const link = item.pblancUrl || item.rceptEngnHmpgUrl || item.link || ''
 
-    return {
+    const baseItem = {
       id: item.pblancId,
       title,
       organization: '기업마당',
@@ -361,6 +516,9 @@ const transformApiResponse = (items) => {
       reqstDt: rawReqst,
       hashTags: rawHashtags,
     }
+
+    // type과 tags 추가
+    return enrichWithTypeAndTags(baseItem)
   })
 }
 
@@ -440,7 +598,7 @@ const transformKstartupResponse = (items) => {
       const textCategories = extractCategoriesFromText(`${title} ${summary}`)
       const categories = textCategories.length > 0 ? [...new Set(['창업', ...textCategories])] : ['창업']
 
-      return {
+      const baseItem = {
         id: item.pbanc_sn || item.id || `${title}__${start || ''}__${end || ''}`,
         title,
         organization: org,
@@ -460,6 +618,9 @@ const transformKstartupResponse = (items) => {
         reqstDt: start && end ? `${start} ~ ${end}` : start || end || null,
         hashTags: '',
       }
+
+      // type과 tags 추가
+      return enrichWithTypeAndTags(baseItem)
     })
     .filter((x) => x.title)
 }
@@ -608,7 +769,7 @@ const transformMssResponse = (itemBlocks) => {
           ? `${applicationStartDate} ~ ${applicationEndDate}`
           : applicationStartDate || applicationEndDate || null
 
-      return {
+      const baseItem = {
         id: itemId || `mss__${title}__${applicationStartDate || ''}__${applicationEndDate || ''}`,
         title,
         organization: '중소벤처기업부',
@@ -638,6 +799,9 @@ const transformMssResponse = (itemBlocks) => {
           })),
         },
       }
+
+      // type과 tags 추가
+      return enrichWithTypeAndTags(baseItem)
     })
     .filter((x) => x.title)
 }

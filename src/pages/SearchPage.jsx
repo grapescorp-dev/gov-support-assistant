@@ -7,12 +7,48 @@ import { searchAnnouncements, analyzeProgram } from '../api/announcements'
 import { calculateMatchingScore, extractRegionRestriction, getRegionName } from '../utils/matchingScore'
 import { getAnnouncementLink } from '../utils/getAnnouncementLink'
 import { stripHtml } from '../utils/stripHtml'
-import { Search, Loader2, ExternalLink, Sparkles, Filter, Calendar, Building2, Tag, ArrowUpDown, UserCircle, TrendingUp, MapPin, AlertTriangle } from 'lucide-react'
+import { Search, Loader2, ExternalLink, Sparkles, Filter, Calendar, Building2, Tag, ArrowUpDown, UserCircle, TrendingUp, MapPin, AlertTriangle, Briefcase, CalendarDays, Info } from 'lucide-react'
 
 const categories = ['전체', 'AI', '음악', 'ICT', 'IT', 'CT', '콘텐츠', '창업']
 
 // 맞춤 공고 필터링 기준 점수
 const MATCHING_THRESHOLD = 30
+
+// 공고 타입 정의
+const ANNOUNCEMENT_TYPES = [
+  { value: 'all', label: '전체', icon: null },
+  { value: 'funding', label: '지원금/과제', icon: Briefcase },
+  { value: 'event', label: '행사', icon: CalendarDays },
+  { value: 'info', label: '안내', icon: Info },
+]
+
+// 행사 하위 탭 정의
+const EVENT_SUB_TABS = [
+  { value: 'all', label: '전체 행사' },
+  { value: 'exhibition', label: '전시/로드쇼', tag: '전시/로드쇼' },
+  { value: 'seminar', label: '세미나/교육', tag: '교육/세미나' },
+  { value: 'ir', label: 'IR/데모데이', tags: ['투자/IR', '데모데이/피칭'] },
+]
+
+// 태그 색상 매핑
+const TAG_COLORS = {
+  'R&D': 'bg-purple-100 text-purple-700',
+  '수출/해외진출': 'bg-blue-100 text-blue-700',
+  '창업/스타트업': 'bg-green-100 text-green-700',
+  '소상공인': 'bg-orange-100 text-orange-700',
+  '중소기업': 'bg-gray-100 text-gray-700',
+  '투자/IR': 'bg-indigo-100 text-indigo-700',
+  '교육/세미나': 'bg-yellow-100 text-yellow-700',
+  '전시/로드쇼': 'bg-pink-100 text-pink-700',
+  '데모데이/피칭': 'bg-red-100 text-red-700',
+  '바우처/이용권': 'bg-teal-100 text-teal-700',
+  '입주/공간': 'bg-cyan-100 text-cyan-700',
+  '컨설팅/멘토링': 'bg-lime-100 text-lime-700',
+  '디지털전환': 'bg-sky-100 text-sky-700',
+  '제조/스마트공장': 'bg-amber-100 text-amber-700',
+  'AI/데이터': 'bg-violet-100 text-violet-700',
+  '콘텐츠/미디어': 'bg-rose-100 text-rose-700',
+}
 
 export function SearchPage() {
   const navigate = useNavigate()
@@ -28,6 +64,21 @@ export function SearchPage() {
   const [showOnlyMatched, setShowOnlyMatched] = useState(false) // 맞춤 공고만 표시 여부
   const [aiAnalysis, setAiAnalysis] = useState(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
+
+  // 타입 필터 상태
+  const [selectedType, setSelectedType] = useState('all')
+  const [selectedEventSubTab, setSelectedEventSubTab] = useState('all')
+
+  // 타입별 공고 수 계산
+  const typeCounts = useMemo(() => {
+    const counts = { all: 0, funding: 0, event: 0, info: 0, unknown: 0 }
+    results.forEach(p => {
+      const type = p.type || 'unknown'
+      counts[type] = (counts[type] || 0) + 1
+      counts.all++
+    })
+    return counts
+  }, [results])
 
   // 매칭률 계산 및 정렬된 결과
   const sortedResults = useMemo(() => {
@@ -60,6 +111,28 @@ export function SearchPage() {
       withMatchingScore = withMatchingScore.filter((p) => p.matchingScore >= MATCHING_THRESHOLD)
     }
 
+    // 타입 필터링
+    if (selectedType !== 'all') {
+      withMatchingScore = withMatchingScore.filter((p) => p.type === selectedType)
+
+      // 행사 하위 탭 필터링
+      if (selectedType === 'event' && selectedEventSubTab !== 'all') {
+        const subTab = EVENT_SUB_TABS.find(t => t.value === selectedEventSubTab)
+        if (subTab) {
+          withMatchingScore = withMatchingScore.filter((p) => {
+            const tags = p.tags || []
+            if (subTab.tag) {
+              return tags.includes(subTab.tag)
+            }
+            if (subTab.tags) {
+              return subTab.tags.some(t => tags.includes(t))
+            }
+            return true
+          })
+        }
+      }
+    }
+
     // 카테고리 필터링 (클라이언트 측에서 추가 필터링)
     if (selectedCategory !== '전체') {
       withMatchingScore = withMatchingScore.filter((p) => {
@@ -83,7 +156,7 @@ export function SearchPage() {
       if (!b.deadline) return -1
       return new Date(a.deadline) - new Date(b.deadline)
     })
-  }, [results, activeProfile, sortBy, showExpired, showOnlyMatched, selectedCategory])
+  }, [results, activeProfile, sortBy, showExpired, showOnlyMatched, selectedCategory, selectedType, selectedEventSubTab])
 
   // 초기 로딩 - 전체 목록 가져오기
   useEffect(() => {
@@ -120,6 +193,14 @@ export function SearchPage() {
 
   const handleCategoryChange = (category) => {
     setSelectedCategory(category)
+  }
+
+  const handleTypeChange = (type) => {
+    setSelectedType(type)
+    // 타입 변경 시 행사 하위 탭 초기화
+    if (type !== 'event') {
+      setSelectedEventSubTab('all')
+    }
   }
 
   const handleSelectProgram = async (program) => {
@@ -169,6 +250,32 @@ export function SearchPage() {
     navigate(`/editor/${newDoc.id}`)
   }
 
+  // 태그 배지 렌더링 (최대 3개, 나머지는 +n)
+  const renderTags = (tags) => {
+    if (!tags || tags.length === 0) return null
+
+    const visibleTags = tags.slice(0, 3)
+    const remainingCount = tags.length - 3
+
+    return (
+      <div className="flex flex-wrap gap-1 mt-2">
+        {visibleTags.map((tag) => (
+          <span
+            key={tag}
+            className={`text-xs px-1.5 py-0.5 rounded ${TAG_COLORS[tag] || 'bg-gray-100 text-gray-600'}`}
+          >
+            {tag}
+          </span>
+        ))}
+        {remainingCount > 0 && (
+          <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">
+            +{remainingCount}
+          </span>
+        )}
+      </div>
+    )
+  }
+
   // 카테고리 변경은 클라이언트 측 필터링으로 처리 (sortedResults에서 처리됨)
   // API 재검색 불필요
 
@@ -185,7 +292,7 @@ export function SearchPage() {
             </>
           ) : (
             <>
-              {selectedCategory !== '전체' ? (
+              {selectedCategory !== '전체' || selectedType !== 'all' ? (
                 <>
                   <span className="font-semibold text-blue-600">{sortedResults.length}</span>개
                   <span className="text-gray-400 mx-1">/</span>
@@ -259,6 +366,51 @@ export function SearchPage() {
         </div>
       )}
 
+      {/* 공고 타입 탭 */}
+      <div className="border-b border-gray-200">
+        <nav className="flex gap-1 -mb-px">
+          {ANNOUNCEMENT_TYPES.map(({ value, label, icon: Icon }) => (
+            <button
+              key={value}
+              onClick={() => handleTypeChange(value)}
+              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+                selectedType === value
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              {Icon && <Icon size={16} />}
+              {label}
+              <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                selectedType === value ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-500'
+              }`}>
+                {typeCounts[value] || 0}
+              </span>
+            </button>
+          ))}
+        </nav>
+      </div>
+
+      {/* 행사 하위 탭 (행사 탭 선택 시에만 표시) */}
+      {selectedType === 'event' && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm text-gray-500 mr-2">행사 유형:</span>
+          {EVENT_SUB_TABS.map(({ value, label }) => (
+            <button
+              key={value}
+              onClick={() => setSelectedEventSubTab(value)}
+              className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                selectedEventSubTab === value
+                  ? 'bg-pink-600 text-white'
+                  : 'bg-pink-50 text-pink-600 hover:bg-pink-100'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* 카테고리 필터 + 정렬 */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2 flex-wrap">
@@ -329,7 +481,17 @@ export function SearchPage() {
                   }`}
                 >
                   <div className="flex justify-between items-start mb-2">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {/* 타입 배지 */}
+                      {program.type && program.type !== 'funding' && (
+                        <span className={`text-xs font-medium px-2 py-0.5 rounded ${
+                          program.type === 'event' ? 'bg-pink-100 text-pink-600' :
+                          program.type === 'info' ? 'bg-gray-100 text-gray-600' :
+                          'bg-gray-100 text-gray-600'
+                        }`}>
+                          {program.type === 'event' ? '행사' : program.type === 'info' ? '안내' : program.type}
+                        </span>
+                      )}
                       <h4 className="font-medium text-gray-900">{program.title}</h4>
                       <span
                         className={`text-xs font-medium px-2 py-0.5 rounded flex items-center gap-1 ${
@@ -356,8 +518,8 @@ export function SearchPage() {
                     </a>
                   </div>
                   <p className="text-sm text-gray-600 mb-3 line-clamp-2">
-  {stripHtml(program.summary)}
-</p>
+                    {stripHtml(program.summary)}
+                  </p>
 
                   <div className="flex flex-wrap gap-2 text-xs">
                     <span className="flex items-center gap-1 bg-gray-100 px-2 py-1 rounded">
@@ -365,18 +527,23 @@ export function SearchPage() {
                       {program.organization}
                     </span>
                     {program.budget ? (
-  <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded font-medium">
-    {program.budget}
-  </span>
-) : null}
+                      <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded font-medium">
+                        {program.budget}
+                      </span>
+                    ) : null}
 
                     <span className="flex items-center gap-1 bg-red-100 text-red-700 px-2 py-1 rounded">
                       <Calendar size={12} />
                       {program.deadline}
                     </span>
                   </div>
+
+                  {/* 태그 배지 표시 */}
+                  {renderTags(program.tags)}
+
+                  {/* 기존 category 표시 (태그와 별도) */}
                   <div className="flex flex-wrap gap-1 mt-2">
-                    {program.category.map((cat) => (
+                    {(program.category || []).map((cat) => (
                       <span key={cat} className="flex items-center gap-1 text-xs text-gray-500">
                         <Tag size={10} />
                         {cat}
