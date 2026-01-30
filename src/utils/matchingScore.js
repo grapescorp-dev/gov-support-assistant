@@ -541,45 +541,14 @@ export function calculateMatchingScore(profile, announcement) {
   if (!profile || !announcement) return 0
 
   let score = 0
-  let maxScore = 0
 
-  // 1. 관심 분야 매칭 (20점) - 비중 조정
-  maxScore += 20
-  if (profile.interests && profile.interests.length > 0 && announcement.category) {
-    const matchedInterests = profile.interests.filter((interest) =>
-      announcement.category.includes(interest)
-    )
-    if (matchedInterests.length > 0) {
-      score += Math.min(20, (matchedInterests.length / profile.interests.length) * 20)
-    }
-  }
-
-  // 2. 서비스 정보 키워드 매칭 (15점)
-  maxScore += 15
-  const profileServiceText = [
-    profile.serviceName || '',
-    profile.businessOverview || '',
-    profile.targetMarket || '',
-  ].join(' ')
-  const announcementText = [
-    announcement.title || '',
-    announcement.summary || '',
-    (announcement.eligibility || []).join(' '),
-  ].join(' ')
-
-  const textMatchCount = calculateTextMatchScore(profileServiceText, announcementText)
-  if (textMatchCount > 0) {
-    // 최대 3개 키워드 매칭 시 만점
-    score += Math.min(15, textMatchCount * 5)
-  }
-
-  // 통합 검색 텍스트 생성 (eligibility + title + summary + parsed)
-  // K-Startup, MSS는 eligibility가 비어있으므로 title/summary에서 검색
-  // MSS 공고는 parsed 필드에 문서에서 추출한 상세 정보가 있을 수 있음
+  // 통합 검색 텍스트 생성 (공고의 모든 텍스트)
   const fullSearchText = [
-    ...(announcement.eligibility || []),
     announcement.title || '',
     announcement.summary || '',
+    ...(announcement.eligibility || []),
+    ...(announcement.category || []),
+    ...(announcement.tags || []),
     announcement.parsed?.eligibilityText || '',
     announcement.parsed?.mandatoryText || '',
     ...(announcement.parsed?.tags || []),
@@ -588,148 +557,167 @@ export function calculateMatchingScore(profile, announcement) {
   // 제외조건 텍스트 (별도 추출 - 감점 로직용)
   const exclusionText = (announcement.parsed?.exclusionText || '').toLowerCase()
 
-  // 3. 기업 형태 매칭 (15점) - 유사어 매칭 적용
-  maxScore += 15
+  // ============================================================
+  // 1. 관심분야/키워드 매칭 (최대 35점) - 핵심 매칭 요소
+  // ============================================================
+
+  // 1-1. 관심분야(interests) 매칭 (최대 20점)
+  if (profile.interests && profile.interests.length > 0) {
+    let interestMatchCount = 0
+    profile.interests.forEach(interest => {
+      const interestLower = interest.toLowerCase()
+      if (fullSearchText.includes(interestLower)) {
+        interestMatchCount++
+      }
+    })
+    if (interestMatchCount > 0) {
+      // 매칭된 관심분야 비율에 따라 점수 부여 (최대 20점)
+      const interestScore = Math.min(20, (interestMatchCount / profile.interests.length) * 25)
+      score += interestScore
+    }
+  }
+
+  // 1-2. 서비스명/사업개요 키워드 직접 매칭 (최대 15점)
+  const profileKeywords = extractKeywordsFromProfile(profile)
+  if (profileKeywords.length > 0) {
+    let keywordMatchCount = 0
+    profileKeywords.forEach(keyword => {
+      if (fullSearchText.includes(keyword.toLowerCase())) {
+        keywordMatchCount++
+      }
+    })
+    if (keywordMatchCount > 0) {
+      // 매칭된 키워드 수에 따라 점수 (키워드당 3점, 최대 15점)
+      score += Math.min(15, keywordMatchCount * 3)
+    }
+  }
+
+  // ============================================================
+  // 2. 기업 적격성 매칭 (최대 30점)
+  // ============================================================
+
+  // 2-1. 기업 형태 매칭 (최대 15점)
   if (profile.companyType) {
     const typeMatches = {
-      preliminary: ['예비창업', '예비창업자'],
-      sole: ['개인사업자', '소상공인', '1인기업'],
-      sme: ['중소기업', '스타트업', '창업기업', '벤처'],
+      preliminary: ['예비창업', '예비창업자', '창업준비'],
+      sole: ['개인사업자', '소상공인', '1인기업', '1인 기업'],
+      sme: ['중소기업', '스타트업', '창업기업', '벤처', '벤처기업'],
       midsize: ['중견기업'],
       nonprofit: ['비영리', '사회적기업', '협동조합'],
     }
 
     const matchKeywords = typeMatches[profile.companyType] || []
-    // 유사어 매칭 사용
     if (matchAnyWithSynonyms(fullSearchText, matchKeywords)) {
       score += 15
     }
+    // 기업형태 매칭 안되면 점수 없음 (기본점수 제거)
   }
 
-  // 4. 업력 매칭 (15점) - 유사어 매칭 적용
-  maxScore += 15
+  // 2-2. 업력 매칭 (최대 15점)
   if (profile.businessAge) {
     const ageMatches = {
-      preliminary: ['예비창업'],
-      under1: ['1년 미만', '초기창업', '1년미만'],
-      '1to3': ['3년 미만', '3년 이내', '초기창업', '3년미만', '3년이내'],
+      preliminary: ['예비창업', '예비창업자'],
+      under1: ['1년 미만', '초기창업', '1년미만', '신규창업'],
+      '1to3': ['3년 미만', '3년 이내', '초기창업', '3년미만', '3년이내', '초기 창업'],
       '3to7': ['7년 미만', '7년 이내', '성장단계', '7년미만', '7년이내', '5년 이내', '5년이내'],
-      over7: [], // 대부분 지원 가능
+      over7: ['7년 이상', '10년 이상'], // 특별히 7년 이상 요구하는 경우만 매칭
     }
 
     const matchKeywords = ageMatches[profile.businessAge] || []
-    if (
-      profile.businessAge === 'over7' ||
-      matchAnyWithSynonyms(fullSearchText, matchKeywords)
-    ) {
+    if (matchAnyWithSynonyms(fullSearchText, matchKeywords)) {
       score += 15
     }
+    // 업력 조건이 명시되지 않은 공고는 점수 없음
   }
 
-  // 5. 지역 매칭 (15점) - 개선된 로직
-  maxScore += 15
+  // ============================================================
+  // 3. 지역 매칭 (최대 15점)
+  // ============================================================
   if (profile.region) {
     const regionRestriction = extractRegionRestriction(announcement)
 
     if (regionRestriction.type === 'nationwide') {
       // 전국 대상 공고 - 기본 점수
-      score += 10
+      score += 8
     } else if (regionRestriction.type === 'restricted') {
       // 특정 지역 제한 공고
       if (profile.region === regionRestriction.region) {
-        // 지역 일치 - 높은 점수
+        // 지역 일치 - 높은 점수 (지역 맞춤 공고!)
         score += 15
       } else {
-        // 지역 불일치 - 감점 (부적합 표시)
-        score -= 15
+        // 지역 불일치 - 큰 감점 (지원 불가 가능성 높음)
+        score -= 20
       }
     } else if (regionRestriction.type === 'preferred') {
       // 기관 소재지 기반 우대
       if (profile.region === regionRestriction.region) {
         score += 12
-      } else {
-        // 다른 지역이어도 지원은 가능 - 기본 점수
-        score += 5
       }
-    } else {
-      // 지역 정보 불명확 - 기본 점수
-      score += 8
+      // 다른 지역이면 점수 없음 (기본점수 제거)
     }
+    // 지역 정보 불명확 - 점수 없음 (기본점수 제거)
   }
 
-  // 6. 인증 보유 시 가산점 (10점) - 비중 조정, 유사어 매칭 적용
-  maxScore += 10
+  // ============================================================
+  // 4. 인증/자격 매칭 (최대 10점)
+  // ============================================================
   if (profile.certifications && profile.certifications.length > 0) {
     const certMatches = {
-      venture: ['벤처기업'],
-      innobiz: ['이노비즈'],
-      mainbiz: ['메인비즈'],
-      research: ['연구소'],
-      patent: ['특허'],
+      venture: ['벤처기업', '벤처 기업', '벤처인증'],
+      innobiz: ['이노비즈', 'innobiz'],
+      mainbiz: ['메인비즈', 'mainbiz'],
+      research: ['연구소', '기업부설연구소', '부설연구소'],
+      patent: ['특허', '지식재산권', '산업재산권'],
     }
 
     let certScore = 0
     profile.certifications.forEach((cert) => {
       const keywords = certMatches[cert] || []
-      // 유사어 매칭 사용
       if (matchAnyWithSynonyms(fullSearchText, keywords)) {
-        certScore += 3.3
+        certScore += 5
       }
     })
     score += Math.min(10, certScore)
   }
 
-  // 7. 매출/인원 조건 매칭 (10점) - 신규 추가
-  maxScore += 10
+  // ============================================================
+  // 5. 매출/인원 조건 매칭 (최대 10점)
+  // ============================================================
   const revenueCondition = extractRevenueCondition(fullSearchText)
   const employeeCondition = extractEmployeeCondition(fullSearchText)
 
-  if (revenueCondition || employeeCondition) {
-    let conditionScore = 0
-
-    // 매출 조건 확인
-    if (revenueCondition && profile.revenue) {
-      const profileRevenue = parseProfileRevenue(profile.revenue)
-      if (meetsRevenueCondition(profileRevenue, revenueCondition)) {
-        conditionScore += 5
-      } else {
-        // 조건 미충족 시 감점
-        conditionScore -= 5
-      }
-    } else if (!revenueCondition) {
-      // 매출 조건 없으면 기본 점수
-      conditionScore += 2.5
+  // 매출 조건 확인
+  if (revenueCondition && profile.revenue) {
+    const profileRevenue = parseProfileRevenue(profile.revenue)
+    if (meetsRevenueCondition(profileRevenue, revenueCondition)) {
+      score += 5
+    } else {
+      // 조건 미충족 시 감점
+      score -= 10
     }
-
-    // 인원 조건 확인
-    if (employeeCondition && profile.employees) {
-      const profileEmployees = parseProfileEmployees(profile.employees)
-      if (meetsEmployeeCondition(profileEmployees, employeeCondition)) {
-        conditionScore += 5
-      } else {
-        // 조건 미충족 시 감점
-        conditionScore -= 5
-      }
-    } else if (!employeeCondition) {
-      // 인원 조건 없으면 기본 점수
-      conditionScore += 2.5
-    }
-
-    score += conditionScore
-  } else {
-    // 매출/인원 조건이 공고에 없으면 기본 점수
-    score += 5
   }
 
-  // 8. 제외조건 감점 (parsed.exclusionText 기반)
-  // 명시적 제외 키워드가 프로필과 충돌하면 큰 감점
+  // 인원 조건 확인
+  if (employeeCondition && profile.employees) {
+    const profileEmployees = parseProfileEmployees(profile.employees)
+    if (meetsEmployeeCondition(profileEmployees, employeeCondition)) {
+      score += 5
+    } else {
+      // 조건 미충족 시 감점
+      score -= 10
+    }
+  }
+
+  // ============================================================
+  // 6. 제외조건 감점 (parsed.exclusionText 기반)
+  // ============================================================
   if (exclusionText && profile.companyType) {
     // 법인만 가능 (개인사업자/예비창업자 제외)
     if (
       (exclusionText.includes('법인만') || exclusionText.includes('법인에 한') || exclusionText.includes('법인 한정')) &&
       (profile.companyType === 'sole' || profile.companyType === 'preliminary')
     ) {
-      score -= 25
+      score -= 30
     }
 
     // 개인사업자 불가
@@ -737,7 +725,7 @@ export function calculateMatchingScore(profile, announcement) {
       (exclusionText.includes('개인사업자 불가') || exclusionText.includes('개인사업자 제외') || exclusionText.includes('개인 제외')) &&
       profile.companyType === 'sole'
     ) {
-      score -= 25
+      score -= 30
     }
 
     // 예비창업자 불가 (기창업자만)
@@ -745,7 +733,7 @@ export function calculateMatchingScore(profile, announcement) {
       (exclusionText.includes('예비창업자 불가') || exclusionText.includes('예비창업 제외') || exclusionText.includes('기창업자만')) &&
       profile.companyType === 'preliminary'
     ) {
-      score -= 25
+      score -= 30
     }
 
     // 중소기업만 (중견기업 제외)
@@ -753,13 +741,68 @@ export function calculateMatchingScore(profile, announcement) {
       (exclusionText.includes('중소기업만') || exclusionText.includes('중견기업 제외') || exclusionText.includes('대기업 제외')) &&
       profile.companyType === 'midsize'
     ) {
-      score -= 20
+      score -= 25
     }
   }
 
-  // 최종 점수 계산 (0-100)
-  const finalScore = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0
-  return Math.min(100, Math.max(0, finalScore))
+  // 최종 점수 (0-100)
+  // 만점 기준: 키워드(35) + 적격성(30) + 지역(15) + 인증(10) + 조건(10) = 100점
+  return Math.min(100, Math.max(0, score))
+}
+
+/**
+ * 프로필에서 주요 키워드 추출
+ * @param {Object} profile - 사용자 프로필
+ * @returns {string[]} 추출된 키워드 배열
+ */
+function extractKeywordsFromProfile(profile) {
+  const keywords = []
+
+  // 서비스명에서 키워드 추출
+  if (profile.serviceName) {
+    const serviceKeywords = profile.serviceName
+      .replace(/[기반|플랫폼|서비스|시스템|솔루션]/g, ' ')
+      .split(/[\s,./]+/)
+      .filter(w => w.length >= 2)
+    keywords.push(...serviceKeywords)
+  }
+
+  // 사업개요에서 핵심 키워드 추출
+  if (profile.businessOverview) {
+    // 주요 기술/산업 키워드
+    const techKeywords = [
+      'ai', '인공지능', '머신러닝', '딥러닝', '빅데이터', '클라우드', '블록체인',
+      'iot', '사물인터넷', '5g', 'ar', 'vr', 'xr', '메타버스',
+      '소프트웨어', 'sw', '앱', '플랫폼', '웹', '모바일', 'saas',
+      '콘텐츠', '미디어', '영상', '게임', '음악', '음원', '애니메이션', '웹툰',
+      '제조', '로봇', '드론', '자동화', '스마트팩토리',
+      '바이오', '헬스케어', '의료', '제약', '진단',
+      '친환경', '그린', '탄소중립', '에너지', '재생에너지', 'esg',
+      '수출', '해외진출', 'b2b', 'b2c', '이커머스', '유통',
+      '핀테크', '금융', '보험', '블록체인', '암호화폐',
+      '교육', '에듀테크', '이러닝',
+      '푸드테크', '농업', '스마트팜',
+      '모빌리티', '자율주행', '전기차',
+    ]
+
+    const overviewLower = profile.businessOverview.toLowerCase()
+    techKeywords.forEach(keyword => {
+      if (overviewLower.includes(keyword)) {
+        keywords.push(keyword)
+      }
+    })
+  }
+
+  // 타겟 시장에서 키워드 추출
+  if (profile.targetMarket) {
+    const marketKeywords = profile.targetMarket
+      .split(/[\s,./]+/)
+      .filter(w => w.length >= 2)
+    keywords.push(...marketKeywords)
+  }
+
+  // 중복 제거
+  return [...new Set(keywords)]
 }
 
 /**
