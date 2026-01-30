@@ -573,13 +573,20 @@ export function calculateMatchingScore(profile, announcement) {
     score += Math.min(15, textMatchCount * 5)
   }
 
-  // 통합 검색 텍스트 생성 (eligibility + title + summary)
+  // 통합 검색 텍스트 생성 (eligibility + title + summary + parsed)
   // K-Startup, MSS는 eligibility가 비어있으므로 title/summary에서 검색
+  // MSS 공고는 parsed 필드에 문서에서 추출한 상세 정보가 있을 수 있음
   const fullSearchText = [
     ...(announcement.eligibility || []),
     announcement.title || '',
     announcement.summary || '',
+    announcement.parsed?.eligibilityText || '',
+    announcement.parsed?.mandatoryText || '',
+    ...(announcement.parsed?.tags || []),
   ].join(' ').toLowerCase()
+
+  // 제외조건 텍스트 (별도 추출 - 감점 로직용)
+  const exclusionText = (announcement.parsed?.exclusionText || '').toLowerCase()
 
   // 3. 기업 형태 매칭 (15점) - 유사어 매칭 적용
   maxScore += 15
@@ -712,6 +719,42 @@ export function calculateMatchingScore(profile, announcement) {
   } else {
     // 매출/인원 조건이 공고에 없으면 기본 점수
     score += 5
+  }
+
+  // 8. 제외조건 감점 (parsed.exclusionText 기반)
+  // 명시적 제외 키워드가 프로필과 충돌하면 큰 감점
+  if (exclusionText && profile.companyType) {
+    // 법인만 가능 (개인사업자/예비창업자 제외)
+    if (
+      (exclusionText.includes('법인만') || exclusionText.includes('법인에 한') || exclusionText.includes('법인 한정')) &&
+      (profile.companyType === 'sole' || profile.companyType === 'preliminary')
+    ) {
+      score -= 25
+    }
+
+    // 개인사업자 불가
+    if (
+      (exclusionText.includes('개인사업자 불가') || exclusionText.includes('개인사업자 제외') || exclusionText.includes('개인 제외')) &&
+      profile.companyType === 'sole'
+    ) {
+      score -= 25
+    }
+
+    // 예비창업자 불가 (기창업자만)
+    if (
+      (exclusionText.includes('예비창업자 불가') || exclusionText.includes('예비창업 제외') || exclusionText.includes('기창업자만')) &&
+      profile.companyType === 'preliminary'
+    ) {
+      score -= 25
+    }
+
+    // 중소기업만 (중견기업 제외)
+    if (
+      (exclusionText.includes('중소기업만') || exclusionText.includes('중견기업 제외') || exclusionText.includes('대기업 제외')) &&
+      profile.companyType === 'midsize'
+    ) {
+      score -= 20
+    }
   }
 
   // 최종 점수 계산 (0-100)
