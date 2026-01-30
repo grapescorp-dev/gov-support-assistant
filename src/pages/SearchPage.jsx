@@ -3,11 +3,11 @@ import { useNavigate, Link } from 'react-router-dom'
 import { useSearchStore } from '../stores/useSearchStore'
 import { useProfileStore } from '../stores/useProfileStore'
 import { useDocumentStore } from '../stores/useDocumentStore'
-import { searchAnnouncements, analyzeProgram } from '../api/announcements'
+import { searchAnnouncements, analyzeProgram, summarizeProgramFromDoc } from '../api/announcements'
 import { calculateMatchingScore, extractRegionRestriction, getRegionName } from '../utils/matchingScore'
 import { getAnnouncementLink } from '../utils/getAnnouncementLink'
 import { stripHtml } from '../utils/stripHtml'
-import { Search, Loader2, ExternalLink, Sparkles, Filter, Calendar, Building2, Tag, ArrowUpDown, UserCircle, TrendingUp, MapPin, AlertTriangle, Briefcase, CalendarDays, Info } from 'lucide-react'
+import { Search, Loader2, ExternalLink, Sparkles, Filter, Calendar, Building2, Tag, ArrowUpDown, UserCircle, TrendingUp, MapPin, AlertTriangle, Briefcase, CalendarDays, Info, FileText, AlertCircle, CheckCircle2 } from 'lucide-react'
 
 const categories = ['전체', 'AI', '음악', 'ICT', 'IT', 'CT', '콘텐츠', '창업']
 
@@ -64,6 +64,11 @@ export function SearchPage() {
   const [showOnlyMatched, setShowOnlyMatched] = useState(false) // 맞춤 공고만 표시 여부
   const [aiAnalysis, setAiAnalysis] = useState(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
+
+  // 문서 기반 AI 요약 상태
+  const [docSummary, setDocSummary] = useState(null)
+  const [isDocSummarizing, setIsDocSummarizing] = useState(false)
+  const [docSummaryError, setDocSummaryError] = useState(null)
 
   // 타입 필터 상태
   const [selectedType, setSelectedType] = useState('all')
@@ -206,6 +211,9 @@ export function SearchPage() {
   const handleSelectProgram = async (program) => {
     setSelectedProgram(program)
     setIsAnalyzing(true)
+    // 문서 요약 상태 초기화
+    setDocSummary(null)
+    setDocSummaryError(null)
 
     try {
       const analysis = await analyzeProgram(program, activeProfile)
@@ -248,6 +256,39 @@ export function SearchPage() {
     if (!selectedProgram) return
     const newDoc = createDocument(selectedProgram.id, selectedProgram.title)
     navigate(`/editor/${newDoc.id}`)
+  }
+
+  // 문서 기반 AI 요약 핸들러
+  const handleDocSummarize = async () => {
+    if (!selectedProgram) return
+
+    setIsDocSummarizing(true)
+    setDocSummaryError(null)
+
+    try {
+      const result = await summarizeProgramFromDoc(selectedProgram)
+
+      if (result.success) {
+        setDocSummary(result.data)
+        if (result.fromCache) {
+          console.log('[DocSummary] Loaded from cache')
+        }
+      } else {
+        setDocSummaryError(result.error?.message || '요약 생성에 실패했습니다.')
+      }
+    } catch (error) {
+      console.error('[DocSummary] Error:', error)
+      setDocSummaryError(error.message || '서버 요청 중 오류가 발생했습니다.')
+    } finally {
+      setIsDocSummarizing(false)
+    }
+  }
+
+  // MSS 공고이고 첨부파일이 있는지 확인
+  const hasMssDocuments = (program) => {
+    return program?.source === 'mss_api' &&
+           program?.mssMeta?.files &&
+           program.mssMeta.files.length > 0
   }
 
   // 태그 배지 렌더링 (최대 3개, 나머지는 +n)
@@ -677,6 +718,157 @@ export function SearchPage() {
                           </li>
                         ))}
                       </ul>
+                    </div>
+                  )}
+
+                  {/* 문서 기반 AI 요약 섹션 (MSS 공고 전용) */}
+                  {hasMssDocuments(selectedProgram) && (
+                    <div className="border-t border-gray-200 pt-4 mt-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <h5 className="font-medium text-gray-800 flex items-center gap-2">
+                          <FileText size={16} className="text-blue-500" />
+                          문서 기반 AI 요약
+                        </h5>
+                        {!docSummary && !isDocSummarizing && (
+                          <button
+                            onClick={handleDocSummarize}
+                            disabled={isDocSummarizing}
+                            className="text-sm bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg hover:bg-blue-100 transition-colors font-medium flex items-center gap-1"
+                          >
+                            <FileText size={14} />
+                            요약 생성
+                          </button>
+                        )}
+                      </div>
+
+                      {/* 로딩 상태 */}
+                      {isDocSummarizing && (
+                        <div className="flex items-center gap-3 p-4 bg-blue-50 rounded-lg">
+                          <Loader2 size={20} className="animate-spin text-blue-600" />
+                          <div>
+                            <p className="text-sm font-medium text-blue-700">문서 분석 중...</p>
+                            <p className="text-xs text-blue-600">첨부파일에서 지원자격 정보를 추출하고 있습니다.</p>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 에러 상태 */}
+                      {docSummaryError && !isDocSummarizing && (
+                        <div className="flex items-start gap-3 p-4 bg-red-50 rounded-lg">
+                          <AlertCircle size={20} className="text-red-500 flex-shrink-0 mt-0.5" />
+                          <div>
+                            <p className="text-sm font-medium text-red-700">요약 생성 실패</p>
+                            <p className="text-xs text-red-600 mt-1">{docSummaryError}</p>
+                            <button
+                              onClick={handleDocSummarize}
+                              className="text-xs text-red-600 hover:text-red-700 underline mt-2"
+                            >
+                              다시 시도
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 요약 결과 표시 */}
+                      {docSummary && !isDocSummarizing && (
+                        <div className="space-y-3">
+                          {/* 신뢰도 표시 */}
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${
+                              docSummary.confidence === 'high' ? 'bg-green-100 text-green-700' :
+                              docSummary.confidence === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                              'bg-gray-100 text-gray-600'
+                            }`}>
+                              {docSummary.confidence === 'high' ? '높은 신뢰도' :
+                               docSummary.confidence === 'medium' ? '중간 신뢰도' : '낮은 신뢰도'}
+                            </span>
+                            {docSummary.fileName && (
+                              <span className="text-xs text-gray-500">
+                                파일: {docSummary.fileName}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* AI 요약 */}
+                          {docSummary.summary && (
+                            <div className="bg-blue-50 p-3 rounded-lg">
+                              <p className="text-sm text-gray-700 whitespace-pre-line">{docSummary.summary}</p>
+                            </div>
+                          )}
+
+                          {/* 핵심 지원자격 */}
+                          {docSummary.keyEligibility?.length > 0 && (
+                            <div>
+                              <h6 className="text-xs font-medium text-gray-600 mb-1 flex items-center gap-1">
+                                <CheckCircle2 size={12} className="text-green-500" />
+                                핵심 지원자격
+                              </h6>
+                              <ul className="text-sm text-gray-600 space-y-1">
+                                {docSummary.keyEligibility.map((item, i) => (
+                                  <li key={i} className="flex gap-2">
+                                    <span className="text-green-500">•</span>
+                                    {item}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {/* 핵심 제외조건 */}
+                          {docSummary.keyExclusion?.length > 0 && (
+                            <div>
+                              <h6 className="text-xs font-medium text-gray-600 mb-1 flex items-center gap-1">
+                                <AlertTriangle size={12} className="text-orange-500" />
+                                제외/제한 조건
+                              </h6>
+                              <ul className="text-sm text-gray-600 space-y-1">
+                                {docSummary.keyExclusion.map((item, i) => (
+                                  <li key={i} className="flex gap-2">
+                                    <span className="text-orange-500">•</span>
+                                    {item}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {/* 필수 요건 */}
+                          {docSummary.keyMandatory?.length > 0 && (
+                            <div>
+                              <h6 className="text-xs font-medium text-gray-600 mb-1 flex items-center gap-1">
+                                <FileText size={12} className="text-blue-500" />
+                                필수 요건/서류
+                              </h6>
+                              <ul className="text-sm text-gray-600 space-y-1">
+                                {docSummary.keyMandatory.map((item, i) => (
+                                  <li key={i} className="flex gap-2">
+                                    <span className="text-blue-500">•</span>
+                                    {item}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {/* 추천 */}
+                          {docSummary.recommendation && (
+                            <div className="bg-green-50 p-3 rounded-lg">
+                              <p className="text-sm text-green-700">
+                                💡 {docSummary.recommendation}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* 노트 (파싱 실패 정보 등) */}
+                          {docSummary.notes?.length > 0 && (
+                            <div className="text-xs text-gray-500 space-y-1">
+                              {docSummary.notes.map((note, i) => (
+                                <p key={i}>※ {note}</p>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
 
