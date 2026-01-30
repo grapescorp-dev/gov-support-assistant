@@ -7,7 +7,8 @@ import { searchAnnouncements, analyzeProgram, summarizeProgramFromDoc } from '..
 import { calculateMatchingScore, extractRegionRestriction, getRegionName } from '../utils/matchingScore'
 import { getAnnouncementLink } from '../utils/getAnnouncementLink'
 import { stripHtml } from '../utils/stripHtml'
-import { Search, Loader2, ExternalLink, Sparkles, Filter, Calendar, Building2, Tag, ArrowUpDown, UserCircle, TrendingUp, MapPin, AlertTriangle, Briefcase, CalendarDays, Info, FileText, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { CollapsibleTags } from '../components/CollapsibleTags'
+import { Search, Loader2, ExternalLink, Sparkles, Filter, Calendar, Building2, Tag, ArrowUpDown, UserCircle, TrendingUp, MapPin, AlertTriangle, Briefcase, CalendarDays, Info, FileText, AlertCircle, CheckCircle2, X } from 'lucide-react'
 
 const categories = ['전체', 'AI', '음악', 'ICT', 'IT', 'CT', '콘텐츠', '창업']
 
@@ -30,25 +31,27 @@ const EVENT_SUB_TABS = [
   { value: 'ir', label: 'IR/데모데이', tags: ['투자/IR', '데모데이/피칭'] },
 ]
 
-// 태그 색상 매핑
-const TAG_COLORS = {
-  'R&D': 'bg-purple-100 text-purple-700',
-  '수출/해외진출': 'bg-blue-100 text-blue-700',
-  '창업/스타트업': 'bg-green-100 text-green-700',
-  '소상공인': 'bg-orange-100 text-orange-700',
-  '중소기업': 'bg-gray-100 text-gray-700',
-  '투자/IR': 'bg-indigo-100 text-indigo-700',
-  '교육/세미나': 'bg-yellow-100 text-yellow-700',
-  '전시/로드쇼': 'bg-pink-100 text-pink-700',
-  '데모데이/피칭': 'bg-red-100 text-red-700',
-  '바우처/이용권': 'bg-teal-100 text-teal-700',
-  '입주/공간': 'bg-cyan-100 text-cyan-700',
-  '컨설팅/멘토링': 'bg-lime-100 text-lime-700',
-  '디지털전환': 'bg-sky-100 text-sky-700',
-  '제조/스마트공장': 'bg-amber-100 text-amber-700',
-  'AI/데이터': 'bg-violet-100 text-violet-700',
-  '콘텐츠/미디어': 'bg-rose-100 text-rose-700',
-}
+// 필터링 가능한 태그 목록 (10~15개)
+const FILTERABLE_TAGS = [
+  // 행사형 (우선순위 높음)
+  '전시/로드쇼', '교육/세미나', '투자/IR', '데모데이/피칭',
+  // 수출/글로벌
+  '수출/해외진출',
+  // 대상
+  '창업/스타트업', '소상공인', '중소기업', '예비창업',
+  // 지원유형
+  'R&D', '바우처/이용권', '입주/공간', '컨설팅/멘토링',
+  // 기술/산업
+  'AI/데이터', '디지털전환',
+]
+
+// 소스(organization) 필터 옵션
+const SOURCE_FILTERS = [
+  { value: 'all', label: '전체 소스' },
+  { value: 'bizinfo', label: '기업마당', color: 'bg-blue-100 text-blue-700' },
+  { value: 'kstartup', label: 'K-Startup', color: 'bg-green-100 text-green-700' },
+  { value: 'mss_api', label: '중소벤처기업부', color: 'bg-purple-100 text-purple-700' },
+]
 
 export function SearchPage() {
   const navigate = useNavigate()
@@ -73,6 +76,12 @@ export function SearchPage() {
   // 타입 필터 상태
   const [selectedType, setSelectedType] = useState('all')
   const [selectedEventSubTab, setSelectedEventSubTab] = useState('all')
+
+  // 태그 필터 상태 (다중 선택)
+  const [selectedTags, setSelectedTags] = useState([])
+
+  // 소스 필터 상태
+  const [selectedSource, setSelectedSource] = useState('all')
 
   // 타입별 공고 수 계산
   const typeCounts = useMemo(() => {
@@ -138,6 +147,19 @@ export function SearchPage() {
       }
     }
 
+    // 태그 필터링 (다중 선택 - OR 조건: 선택된 태그 중 하나라도 포함되면 표시)
+    if (selectedTags.length > 0) {
+      withMatchingScore = withMatchingScore.filter((p) => {
+        const programTags = p.tags || []
+        return selectedTags.some(tag => programTags.includes(tag))
+      })
+    }
+
+    // 소스 필터링
+    if (selectedSource !== 'all') {
+      withMatchingScore = withMatchingScore.filter((p) => p.source === selectedSource)
+    }
+
     // 카테고리 필터링 (클라이언트 측에서 추가 필터링)
     if (selectedCategory !== '전체') {
       withMatchingScore = withMatchingScore.filter((p) => {
@@ -161,7 +183,7 @@ export function SearchPage() {
       if (!b.deadline) return -1
       return new Date(a.deadline) - new Date(b.deadline)
     })
-  }, [results, activeProfile, sortBy, showExpired, showOnlyMatched, selectedCategory, selectedType, selectedEventSubTab])
+  }, [results, activeProfile, sortBy, showExpired, showOnlyMatched, selectedCategory, selectedType, selectedEventSubTab, selectedTags, selectedSource])
 
   // 초기 로딩 - 전체 목록 가져오기
   useEffect(() => {
@@ -206,6 +228,20 @@ export function SearchPage() {
     if (type !== 'event') {
       setSelectedEventSubTab('all')
     }
+  }
+
+  // 태그 필터 토글 (다중 선택)
+  const toggleTagFilter = (tag) => {
+    setSelectedTags(prev =>
+      prev.includes(tag)
+        ? prev.filter(t => t !== tag)
+        : [...prev, tag]
+    )
+  }
+
+  // 태그 필터 전체 해제
+  const clearTagFilters = () => {
+    setSelectedTags([])
   }
 
   const handleSelectProgram = async (program) => {
@@ -291,31 +327,6 @@ export function SearchPage() {
            program.mssMeta.files.length > 0
   }
 
-  // 태그 배지 렌더링 (최대 3개, 나머지는 +n)
-  const renderTags = (tags) => {
-    if (!tags || tags.length === 0) return null
-
-    const visibleTags = tags.slice(0, 3)
-    const remainingCount = tags.length - 3
-
-    return (
-      <div className="flex flex-wrap gap-1 mt-2">
-        {visibleTags.map((tag) => (
-          <span
-            key={tag}
-            className={`text-xs px-1.5 py-0.5 rounded ${TAG_COLORS[tag] || 'bg-gray-100 text-gray-600'}`}
-          >
-            {tag}
-          </span>
-        ))}
-        {remainingCount > 0 && (
-          <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">
-            +{remainingCount}
-          </span>
-        )}
-      </div>
-    )
-  }
 
   // 카테고리 변경은 클라이언트 측 필터링으로 처리 (sortedResults에서 처리됨)
   // API 재검색 불필요
@@ -452,6 +463,64 @@ export function SearchPage() {
         </div>
       )}
 
+      {/* 태그 필터 (다중 선택) */}
+      <div className="bg-gray-50 p-3 rounded-lg border border-gray-200">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <Tag size={14} className="text-gray-500" />
+            <span className="text-sm font-medium text-gray-700">태그 필터</span>
+            {selectedTags.length > 0 && (
+              <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">
+                {selectedTags.length}개 선택
+              </span>
+            )}
+          </div>
+          {selectedTags.length > 0 && (
+            <button
+              onClick={clearTagFilters}
+              className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
+            >
+              <X size={12} />
+              초기화
+            </button>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {FILTERABLE_TAGS.map((tag) => (
+            <button
+              key={tag}
+              onClick={() => toggleTagFilter(tag)}
+              className={`text-xs px-2 py-1 rounded-full border transition-colors ${
+                selectedTags.includes(tag)
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'
+              }`}
+            >
+              {tag}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* 소스 필터 */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <Building2 size={14} className="text-gray-500" />
+        <span className="text-sm text-gray-500">소스:</span>
+        {SOURCE_FILTERS.map(({ value, label }) => (
+          <button
+            key={value}
+            onClick={() => setSelectedSource(value)}
+            className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+              selectedSource === value
+                ? 'bg-gray-800 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       {/* 카테고리 필터 + 정렬 */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2 flex-wrap">
@@ -579,8 +648,10 @@ export function SearchPage() {
                     </span>
                   </div>
 
-                  {/* 태그 배지 표시 */}
-                  {renderTags(program.tags)}
+                  {/* 태그 배지 표시 (CollapsibleTags 컴포넌트 사용) */}
+                  {program.tags && program.tags.length > 0 && (
+                    <CollapsibleTags tags={program.tags} maxLines={2} className="mt-2" />
+                  )}
 
                   {/* 기존 category 표시 (태그와 별도) */}
                   <div className="flex flex-wrap gap-1 mt-2">
