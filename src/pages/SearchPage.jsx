@@ -32,19 +32,14 @@ const EVENT_SUB_TABS = [
   { value: 'ir', label: 'IR/데모데이', tags: ['투자/IR', '데모데이/피칭'] },
 ]
 
-// 필터링 가능한 태그 목록 (10~15개)
-const FILTERABLE_TAGS = [
-  // 행사형 (우선순위 높음)
-  '전시/로드쇼', '교육/세미나', '투자/IR', '데모데이/피칭',
-  // 수출/글로벌
-  '수출/해외진출',
-  // 대상
-  '창업/스타트업', '소상공인', '중소기업', '예비창업',
-  // 지원유형
-  'R&D', '바우처/이용권', '입주/공간', '컨설팅/멘토링',
-  // 기술/산업
-  'AI/데이터', '디지털전환',
-]
+// 태그 필터: 대상/지원유형 중심 (관심분야와 역할 분리)
+// - 관심분야 필터: 기술/산업 분야 (무엇을 하는 기업인가)
+// - 태그 필터: 지원 대상/유형 (어떤 지원을 받고 싶은가)
+const TAG_FILTER_GROUPS = {
+  대상: ['창업/스타트업', '소상공인', '중소기업', '예비창업', '여성기업', '청년창업'],
+  지원유형: ['R&D', '바우처/이용권', '입주/공간', '컨설팅/멘토링', '인력지원', '자금/융자'],
+  행사: ['전시/로드쇼', '교육/세미나', '투자/IR', '데모데이/피칭', '네트워킹'],
+}
 
 // 소스(organization) 필터 옵션
 const SOURCE_FILTERS = [
@@ -470,12 +465,13 @@ export function SearchPage() {
         </div>
       )}
 
-      {/* 태그 필터 (다중 선택) */}
+      {/* 태그 필터 (대상/지원유형 중심 - 관심분야와 역할 분리) */}
       <div className="bg-gray-50 p-3 rounded-lg border border-gray-200">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
             <Tag size={14} className="text-gray-500" />
             <span className="text-sm font-medium text-gray-700">태그 필터</span>
+            <span className="text-xs text-gray-400">(대상/지원유형)</span>
             {selectedTags.length > 0 && (
               <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">
                 {selectedTags.length}개 선택
@@ -492,19 +488,25 @@ export function SearchPage() {
             </button>
           )}
         </div>
-        <div className="flex flex-wrap gap-1.5">
-          {FILTERABLE_TAGS.map((tag) => (
-            <button
-              key={tag}
-              onClick={() => toggleTagFilter(tag)}
-              className={`text-xs px-2 py-1 rounded-full border transition-colors ${
-                selectedTags.includes(tag)
-                  ? 'bg-blue-600 text-white border-blue-600'
-                  : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'
-              }`}
-            >
-              {tag}
-            </button>
+        {/* 그룹별 태그 필터 */}
+        <div className="space-y-2">
+          {Object.entries(TAG_FILTER_GROUPS).map(([group, tags]) => (
+            <div key={group} className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs text-gray-400 w-16 flex-shrink-0">{group}</span>
+              {tags.map((tag) => (
+                <button
+                  key={tag}
+                  onClick={() => toggleTagFilter(tag)}
+                  className={`text-xs px-2 py-1 rounded-full border transition-colors ${
+                    selectedTags.includes(tag)
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'
+                  }`}
+                >
+                  {tag}
+                </button>
+              ))}
+            </div>
           ))}
         </div>
       </div>
@@ -565,9 +567,9 @@ export function SearchPage() {
           </button>
         </div>
 
-        {/* 그룹별 카테고리 */}
+        {/* 그룹별 카테고리 (기술/산업만 - 지원유형은 태그 필터에서 처리) */}
         <div className="space-y-2">
-          {['기술', '산업', '지원유형'].map(group => (
+          {['기술', '산업'].map(group => (
             <div key={group} className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs text-gray-400 w-14 flex-shrink-0">{group}</span>
               {INTERESTS.filter(i => i.group === group).map(interest => (
