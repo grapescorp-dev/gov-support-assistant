@@ -496,7 +496,85 @@ export function extractRegionRestriction(announcement) {
 // Hard Filter (자격 검증) - 점수 계산 전 필터링
 // ==============================================
 // 목적: 사용자가 실제로 지원 가능한 공고만 추천 영역에 노출
-// 원칙: Hard Filter를 통과하지 못한 공고는 매칭 점수 계산, 정렬, 추천 리스트에 절대 포함되지 않음
+// 원칙: Hard Filter는 "high confidence 조건"만 제외에 사용
+// medium/low는 excludedReasons(로그)만 남기고 isEligible을 false로 만들지 않음
+
+/**
+ * Confidence 레벨 정의
+ * - high: 확정적 조건 (Hard Filter 제외 트리거 가능)
+ * - medium: 가능성 높은 조건 (로그만, 제외 안함)
+ * - low: 불확실한 조건 (로그만, 제외 안함)
+ */
+const CONFIDENCE = {
+  HIGH: 'high',
+  MEDIUM: 'medium',
+  LOW: 'low',
+}
+
+/**
+ * 제외 우선순위 (P0가 가장 높음)
+ */
+const PRIORITY = {
+  P0: 0, // 명시적 제외조건 (exclusionText)
+  P1: 1, // 기업형태 불일치
+  P2: 2, // 지역 불일치
+  P3: 3, // 업력 불일치
+  P4: 4, // 인증/필수요건
+}
+
+/**
+ * 완화/허용 표현 - 이 표현이 있으면 필수 조건이 아닐 가능성 높음
+ */
+const ALLOW_PHRASES = [
+  '지원 가능',
+  '지원가능',
+  '도 가능',
+  '도 지원',
+  '포함',
+  '해당 가능',
+  '우대',
+  '가점',
+  '참고',
+  '권장',
+  '선택',
+  '해당 시',
+  '할 수 있음',
+  '있는 경우',
+  '경우 가능',
+  '도 참여',
+  '참여 가능',
+]
+
+/**
+ * 강한 제외 표현 - 이 표현만 high confidence로 처리
+ */
+const STRONG_EXCLUSION_PATTERNS = {
+  corpOnly: [
+    /법인만/,
+    /법인에\s*한함?/,
+    /법인기업에\s*한함?/,
+    /법인\s*한정/,
+  ],
+  soleExcluded: [
+    /개인\s*사업자?\s*(제외|불가|불포함)/,
+    /개인사업자는?\s*(제외|불가)/,
+  ],
+  preliminaryExcluded: [
+    /예비\s*창업자?\s*(제외|불가|불포함)/,
+    /예비\s*창업\s*(제외|불가)/,
+  ],
+  preliminaryOnly: [
+    /예비\s*창업자?\s*(만|전용|에\s*한함?)(?!.{0,10}(가능|우대|가점|포함))/,
+    /예비\s*창업자?\s*한정/,
+  ],
+  nonprofitExcluded: [
+    /비영리\s*(단체)?\s*(제외|불가|불포함)/,
+  ],
+  midsizeExcluded: [
+    /중견\s*기업\s*(제외|불가|불포함)/,
+    /대기업\s*(제외|불가|불포함)/,
+  ],
+}
 
 /**
  * 제외 사유 코드 정의
@@ -538,6 +616,62 @@ const EXCLUSION_CODES = {
 }
 
 /**
+ * 텍스트에 allowPhrase가 포함되어 있는지 확인
+ * @param {string} text - 검사할 텍스트
+ * @returns {boolean}
+ */
+function hasAllowPhrase(text) {
+  const lowerText = text.toLowerCase()
+  return ALLOW_PHRASES.some(phrase => lowerText.includes(phrase.toLowerCase()))
+}
+
+/**
+ * 패턴 주변 컨텍스트(±40자)에 allowPhrase가 있는지 확인
+ * @param {string} text - 전체 텍스트
+ * @param {RegExp} pattern - 찾을 패턴
+ * @param {number} contextSize - 컨텍스트 크기 (기본 40자)
+ * @returns {boolean}
+ */
+function hasAllowPhraseNearPattern(text, pattern, contextSize = 40) {
+  const match = text.match(pattern)
+  if (!match) return false
+
+  const matchIndex = match.index
+  const start = Math.max(0, matchIndex - contextSize)
+  const end = Math.min(text.length, matchIndex + match[0].length + contextSize)
+  const context = text.slice(start, end)
+
+  return hasAllowPhrase(context)
+}
+
+/**
+ * source별 기본 confidence 결정
+ * @param {string} source - 공고 소스 (mss_api, bizinfo, kstartup 등)
+ * @param {string} ruleType - 규칙 타입 (companyType, age, region, exclusion, mandatory)
+ * @returns {string} confidence level
+ */
+function getBaseConfidenceBySource(source, ruleType) {
+  // mss_api는 parsed 필드가 풍부하므로 기본 high
+  if (source === 'mss_api') {
+    return CONFIDENCE.HIGH
+  }
+
+  // bizinfo/kstartup은 규칙 타입에 따라 다름
+  if (source === 'bizinfo' || source === 'kstartup') {
+    // 업력 조건은 title/summary만으로 판단하면 오탐 많음 → 기본 low
+    if (ruleType === 'age') {
+      return CONFIDENCE.LOW
+    }
+    // 기업형태 중 강한 제외 표현은 medium (추가 검증 필요)
+    if (ruleType === 'companyType') {
+      return CONFIDENCE.MEDIUM
+    }
+  }
+
+  return CONFIDENCE.MEDIUM
+}
+
+/**
  * 기업 형태 라벨 매핑
  */
 const COMPANY_TYPE_LABELS = {
@@ -548,8 +682,750 @@ const COMPANY_TYPE_LABELS = {
   nonprofit: '비영리단체',
 }
 
+// ==============================================
+// buildHardRequirements: 공고에서 자격 요건 추출 (confidence 포함)
+// ==============================================
+
 /**
- * 공고의 기업형태 요구사항 추출 (강화된 패턴 매칭)
+ * 공고에서 Hard Filter 요건을 추출 (confidence 포함)
+ * @param {Object} announcement - 공고 객체
+ * @returns {Object} { companyType, age, region, exclusions, mandatory }
+ */
+export function buildHardRequirements(announcement) {
+  if (!announcement) {
+    return {
+      companyType: { required: [], excluded: [], confidence: CONFIDENCE.LOW },
+      age: { confidence: CONFIDENCE.LOW },
+      region: { type: 'unknown', confidence: CONFIDENCE.LOW },
+      exclusions: { matches: [], confidence: CONFIDENCE.LOW },
+      mandatory: { matches: [], confidence: CONFIDENCE.LOW },
+    }
+  }
+
+  const source = announcement.source || 'unknown'
+
+  // 텍스트 소스 분리 (confidence 판단용)
+  const titleSummary = [
+    announcement.title || '',
+    announcement.summary || '',
+  ].join(' ').toLowerCase()
+
+  const parsedText = [
+    announcement.parsed?.eligibilityText || '',
+    announcement.parsed?.exclusionText || '',
+    announcement.parsed?.mandatoryText || '',
+  ].join(' ').toLowerCase()
+
+  const fullText = [
+    titleSummary,
+    ...(announcement.eligibility || []),
+    ...(announcement.category || []),
+    ...(announcement.tags || []),
+    parsedText,
+  ].join(' ').toLowerCase()
+
+  const hasParsedData = parsedText.length > 10
+
+  // 1. 기업형태 요건 추출
+  const companyTypeReq = extractCompanyTypeRequirementsWithConfidence(
+    fullText,
+    titleSummary,
+    parsedText,
+    source,
+    hasParsedData
+  )
+
+  // 2. 업력 요건 추출
+  const ageReq = extractBusinessAgeRequirementsWithConfidence(
+    fullText,
+    titleSummary,
+    parsedText,
+    source,
+    hasParsedData
+  )
+
+  // 3. 지역 요건 추출
+  const regionReq = extractRegionRequirementsWithConfidence(announcement, source)
+
+  // 4. 명시적 제외조건 추출
+  const exclusionsReq = extractExclusionsWithConfidence(
+    announcement.parsed?.exclusionText || '',
+    source
+  )
+
+  // 5. 필수요건 추출
+  const mandatoryReq = extractMandatoryWithConfidence(
+    announcement.parsed?.mandatoryText || '',
+    announcement.parsed?.exclusionText || '',
+    source
+  )
+
+  return {
+    companyType: companyTypeReq,
+    age: ageReq,
+    region: regionReq,
+    exclusions: exclusionsReq,
+    mandatory: mandatoryReq,
+    _source: source,
+    _hasParsedData: hasParsedData,
+  }
+}
+
+/**
+ * 기업형태 요건 추출 (confidence 포함)
+ */
+function extractCompanyTypeRequirementsWithConfidence(fullText, titleSummary, parsedText, source, hasParsedData) {
+  const result = {
+    required: [],
+    excluded: [],
+    confidence: CONFIDENCE.LOW,
+    details: [],
+  }
+
+  // 강한 제외 표현 체크 (high confidence 후보)
+  const checkStrongPattern = (patterns, type, code, message) => {
+    for (const pattern of patterns) {
+      if (pattern.test(fullText)) {
+        // 주변에 allowPhrase가 있으면 confidence 낮춤
+        const hasAllow = hasAllowPhraseNearPattern(fullText, pattern)
+
+        // 판단: parsed 텍스트에 있으면 high, title/summary만이면 medium
+        let confidence = CONFIDENCE.MEDIUM
+        if (hasParsedData && pattern.test(parsedText) && !hasAllow) {
+          confidence = CONFIDENCE.HIGH
+        } else if (source === 'mss_api' && !hasAllow) {
+          confidence = CONFIDENCE.HIGH
+        } else if (hasAllow) {
+          confidence = CONFIDENCE.LOW
+        }
+
+        // 강한 제외 표현(제외/불가)은 source 무관하게 high 가능
+        if (/제외|불가|불포함/.test(pattern.source) && !hasAllow) {
+          confidence = CONFIDENCE.HIGH
+        }
+
+        result.details.push({ type, code, message, confidence, hasAllow })
+
+        // 가장 높은 confidence 유지
+        if (confidence === CONFIDENCE.HIGH) {
+          result.confidence = CONFIDENCE.HIGH
+        } else if (confidence === CONFIDENCE.MEDIUM && result.confidence !== CONFIDENCE.HIGH) {
+          result.confidence = CONFIDENCE.MEDIUM
+        }
+
+        return { matched: true, confidence }
+      }
+    }
+    return { matched: false }
+  }
+
+  // 법인만 가능
+  const corpCheck = checkStrongPattern(
+    STRONG_EXCLUSION_PATTERNS.corpOnly,
+    'corpOnly',
+    EXCLUSION_CODES.COMPANY_TYPE_CORP_ONLY,
+    '법인기업에 한함'
+  )
+  if (corpCheck.matched) {
+    result.required.push('corporation')
+    if (corpCheck.confidence === CONFIDENCE.HIGH) {
+      result.excluded.push('preliminary', 'sole')
+    }
+  }
+
+  // 개인사업자 제외
+  const soleCheck = checkStrongPattern(
+    STRONG_EXCLUSION_PATTERNS.soleExcluded,
+    'soleExcluded',
+    EXCLUSION_CODES.COMPANY_TYPE_SOLE_EXCLUDED,
+    '개인사업자 제외'
+  )
+  if (soleCheck.matched && soleCheck.confidence === CONFIDENCE.HIGH) {
+    result.excluded.push('sole')
+  }
+
+  // 예비창업자 제외
+  const prelimExcCheck = checkStrongPattern(
+    STRONG_EXCLUSION_PATTERNS.preliminaryExcluded,
+    'preliminaryExcluded',
+    EXCLUSION_CODES.COMPANY_TYPE_PRELIMINARY_EXCLUDED,
+    '예비창업자 제외'
+  )
+  if (prelimExcCheck.matched && prelimExcCheck.confidence === CONFIDENCE.HIGH) {
+    result.excluded.push('preliminary')
+  }
+
+  // 예비창업자 전용
+  const prelimOnlyCheck = checkStrongPattern(
+    STRONG_EXCLUSION_PATTERNS.preliminaryOnly,
+    'preliminaryOnly',
+    EXCLUSION_CODES.COMPANY_TYPE_PRELIMINARY_ONLY,
+    '예비창업자 전용'
+  )
+  if (prelimOnlyCheck.matched) {
+    result.required.push('preliminary')
+  }
+
+  // 비영리 제외
+  const nonprofitCheck = checkStrongPattern(
+    STRONG_EXCLUSION_PATTERNS.nonprofitExcluded,
+    'nonprofitExcluded',
+    EXCLUSION_CODES.COMPANY_TYPE_NONPROFIT_EXCLUDED,
+    '비영리단체 제외'
+  )
+  if (nonprofitCheck.matched && nonprofitCheck.confidence === CONFIDENCE.HIGH) {
+    result.excluded.push('nonprofit')
+  }
+
+  // 중견기업 제외
+  const midsizeCheck = checkStrongPattern(
+    STRONG_EXCLUSION_PATTERNS.midsizeExcluded,
+    'midsizeExcluded',
+    EXCLUSION_CODES.COMPANY_TYPE_MIDSIZE_EXCLUDED,
+    '중견기업/대기업 제외'
+  )
+  if (midsizeCheck.matched && midsizeCheck.confidence === CONFIDENCE.HIGH) {
+    result.excluded.push('midsize')
+  }
+
+  // 소상공인 전용 - 항상 LOW (확정 불가)
+  const smallbizPatterns = [
+    /소상공인\s*(만|전용|에\s*한|한정|대상)/,
+    /소상공인에\s*한함?/,
+  ]
+  if (smallbizPatterns.some(p => p.test(fullText))) {
+    result.details.push({
+      type: 'smallbizOnly',
+      code: EXCLUSION_CODES.COMPANY_TYPE_SMALLBIZ_ONLY,
+      message: '소상공인 대상 (확정 불가 - 상시근로자 수 필요)',
+      confidence: CONFIDENCE.LOW, // 항상 LOW - 소상공인 판정은 상시근로자 수 필요
+    })
+    // result.required.push('smallbusiness') -- 추가하지 않음
+  }
+
+  result.excluded = [...new Set(result.excluded)]
+  result.required = [...new Set(result.required)]
+
+  return result
+}
+
+/**
+ * 업력 요건 추출 (confidence 포함)
+ */
+function extractBusinessAgeRequirementsWithConfidence(fullText, titleSummary, parsedText, source, hasParsedData) {
+  const result = {
+    maxYears: undefined,
+    minYears: undefined,
+    preliminaryOnly: false,
+    establishedOnly: false,
+    allowPreliminary: false,
+    confidence: CONFIDENCE.LOW,
+    details: [],
+  }
+
+  // 패턴 매칭
+  const withinPatterns = [
+    { pattern: /창업\s*(\d+)\s*년\s*(이내|미만|이하)/, type: 'maxYears' },
+    { pattern: /업력\s*(\d+)\s*년\s*(이내|미만|이하)/, type: 'maxYears' },
+    { pattern: /(\d+)\s*년\s*(이내|미만)\s*(창업|기업)/, type: 'maxYears' },
+    { pattern: /설립\s*(\d+)\s*년\s*(이내|미만)/, type: 'maxYears' },
+  ]
+
+  const overPatterns = [
+    { pattern: /(\d+)\s*년\s*이상\s*(기업|업력|창업|된)/, type: 'minYears' },
+    { pattern: /업력\s*(\d+)\s*년\s*이상/, type: 'minYears' },
+    { pattern: /창업\s*(\d+)\s*년\s*이상/, type: 'minYears' },
+  ]
+
+  // maxYears 체크
+  for (const { pattern, type } of withinPatterns) {
+    const match = fullText.match(pattern)
+    if (match) {
+      const years = parseInt(match[1])
+      const hasAllow = hasAllowPhraseNearPattern(fullText, pattern)
+
+      // bizinfo/kstartup에서 업력 조건은 기본 LOW
+      let confidence = CONFIDENCE.LOW
+      if (source === 'mss_api' && hasParsedData && pattern.test(parsedText) && !hasAllow) {
+        confidence = CONFIDENCE.HIGH
+      } else if (hasAllow) {
+        confidence = CONFIDENCE.LOW
+      } else if (hasParsedData && pattern.test(parsedText)) {
+        confidence = CONFIDENCE.MEDIUM
+      }
+
+      result.maxYears = years
+      result.details.push({
+        type,
+        value: years,
+        confidence,
+        hasAllow,
+        message: `창업 ${years}년 이내`,
+      })
+
+      if (confidence === CONFIDENCE.HIGH) {
+        result.confidence = CONFIDENCE.HIGH
+      } else if (confidence === CONFIDENCE.MEDIUM && result.confidence !== CONFIDENCE.HIGH) {
+        result.confidence = CONFIDENCE.MEDIUM
+      }
+      break
+    }
+  }
+
+  // minYears 체크
+  for (const { pattern, type } of overPatterns) {
+    const match = fullText.match(pattern)
+    if (match) {
+      const years = parseInt(match[1])
+      const hasAllow = hasAllowPhraseNearPattern(fullText, pattern)
+
+      let confidence = CONFIDENCE.LOW
+      if (source === 'mss_api' && hasParsedData && pattern.test(parsedText) && !hasAllow) {
+        confidence = CONFIDENCE.HIGH
+      } else if (hasAllow) {
+        confidence = CONFIDENCE.LOW
+      }
+
+      result.minYears = years
+      result.details.push({
+        type,
+        value: years,
+        confidence,
+        hasAllow,
+        message: `창업 ${years}년 이상`,
+      })
+      break
+    }
+  }
+
+  // 예비창업자 전용
+  const prelimOnlyPatterns = [
+    /예비\s*창업자?\s*(만|전용|에\s*한함?|한정)/,
+    /예비\s*창업\s*(만|전용)/,
+  ]
+  for (const pattern of prelimOnlyPatterns) {
+    if (pattern.test(fullText)) {
+      const hasAllow = hasAllowPhraseNearPattern(fullText, pattern)
+      let confidence = hasAllow ? CONFIDENCE.LOW : CONFIDENCE.HIGH
+
+      // 강한 표현은 source 무관 high
+      if (/전용|한정|에\s*한함/.test(fullText.match(pattern)?.[0] || '') && !hasAllow) {
+        confidence = CONFIDENCE.HIGH
+      }
+
+      result.preliminaryOnly = true
+      result.maxYears = 0
+      result.details.push({
+        type: 'preliminaryOnly',
+        confidence,
+        hasAllow,
+        message: '예비창업자 전용',
+      })
+
+      if (confidence === CONFIDENCE.HIGH) {
+        result.confidence = CONFIDENCE.HIGH
+      }
+      break
+    }
+  }
+
+  // 기창업자만 (사업자등록 필수)
+  const establishedPatterns = [
+    /기\s*창업자?\s*(만|대상|에\s*한)/,
+    /사업자\s*등록\s*(필수|완료)/,
+    /사업자등록증\s*(필수|보유\s*필수)/,
+  ]
+  for (const pattern of establishedPatterns) {
+    if (pattern.test(fullText)) {
+      const hasAllow = hasAllowPhraseNearPattern(fullText, pattern)
+      let confidence = CONFIDENCE.MEDIUM
+
+      if (source === 'mss_api' && hasParsedData && !hasAllow) {
+        confidence = CONFIDENCE.HIGH
+      }
+      if (/필수/.test(pattern.source) && !hasAllow) {
+        confidence = CONFIDENCE.HIGH
+      }
+
+      result.establishedOnly = true
+      result.details.push({
+        type: 'establishedOnly',
+        confidence,
+        hasAllow,
+        message: '기창업자 대상 (사업자등록 필수)',
+      })
+
+      if (confidence === CONFIDENCE.HIGH) {
+        result.confidence = CONFIDENCE.HIGH
+      }
+      break
+    }
+  }
+
+  return result
+}
+
+/**
+ * 지역 요건 추출 (confidence 포함)
+ */
+function extractRegionRequirementsWithConfidence(announcement, source) {
+  const regionRestriction = extractRegionRestriction(announcement)
+
+  let confidence = CONFIDENCE.LOW
+
+  if (regionRestriction.type === 'restricted') {
+    // 지역 제한이 명확하면 high
+    // "OO시 소재 기업", "OO 지역 기업" 등은 비교적 확실한 표현
+    confidence = CONFIDENCE.HIGH
+  } else if (regionRestriction.type === 'nationwide') {
+    confidence = CONFIDENCE.HIGH
+  }
+
+  return {
+    ...regionRestriction,
+    confidence,
+  }
+}
+
+/**
+ * 명시적 제외조건 추출 (confidence 포함)
+ */
+function extractExclusionsWithConfidence(exclusionText, source) {
+  const result = {
+    matches: [],
+    confidence: CONFIDENCE.LOW,
+  }
+
+  if (!exclusionText) return result
+
+  const lowerText = exclusionText.toLowerCase()
+
+  // 명시적 exclusionText가 있으면 기본 HIGH (MSS API의 parsed 데이터)
+  if (source === 'mss_api' && exclusionText.length > 5) {
+    result.confidence = CONFIDENCE.HIGH
+  }
+
+  // 제외 패턴들
+  const exclusionPatterns = [
+    { pattern: /개인\s*사업자?\s*(제외|불가|불포함)/, type: 'sole', message: '개인사업자 제외' },
+    { pattern: /비영리\s*(단체)?\s*(제외|불가|불포함)/, type: 'nonprofit', message: '비영리단체 제외' },
+    { pattern: /중견\s*기업\s*(제외|불가|불포함)/, type: 'midsize', message: '중견기업 제외' },
+    { pattern: /대기업\s*(제외|불가|불포함)/, type: 'midsize', message: '대기업 제외' },
+    { pattern: /예비\s*창업자?\s*(제외|불가|불포함)/, type: 'preliminary', message: '예비창업자 제외' },
+  ]
+
+  for (const { pattern, type, message } of exclusionPatterns) {
+    if (pattern.test(lowerText)) {
+      result.matches.push({
+        type,
+        message,
+        confidence: result.confidence,
+      })
+    }
+  }
+
+  return result
+}
+
+/**
+ * 필수요건 추출 (confidence 포함)
+ */
+function extractMandatoryWithConfidence(mandatoryText, exclusionText, source) {
+  const result = {
+    matches: [],
+    confidence: CONFIDENCE.LOW,
+  }
+
+  const combinedText = [mandatoryText || '', exclusionText || ''].join(' ').toLowerCase()
+
+  if (!combinedText) return result
+
+  // MSS API parsed 데이터는 high confidence
+  if (source === 'mss_api' && combinedText.length > 5) {
+    result.confidence = CONFIDENCE.HIGH
+  }
+
+  const mandatoryPatterns = [
+    { pattern: /벤처\s*(기업)?\s*(인증)?\s*필수/, type: 'venture', message: '벤처기업 인증 필수' },
+    { pattern: /이노비즈\s*(인증)?\s*필수/, type: 'innobiz', message: '이노비즈 인증 필수' },
+    { pattern: /메인비즈\s*(인증)?\s*필수/, type: 'mainbiz', message: '메인비즈 인증 필수' },
+    { pattern: /기업\s*부설\s*연구소\s*(보유)?\s*필수/, type: 'research', message: '기업부설연구소 필수' },
+    { pattern: /특허\s*(보유)?\s*필수/, type: 'patent', message: '특허 보유 필수' },
+  ]
+
+  for (const { pattern, type, message } of mandatoryPatterns) {
+    if (pattern.test(combinedText)) {
+      result.matches.push({
+        type,
+        message,
+        confidence: result.confidence,
+      })
+    }
+  }
+
+  return result
+}
+
+// ==============================================
+// evaluateEligibility: 프로필과 요건 비교 (confidence 기반 판정)
+// ==============================================
+
+/**
+ * 프로필과 요건을 비교하여 자격 판정
+ * @param {Object} profile - 사용자 프로필
+ * @param {Object} requirements - buildHardRequirements 결과
+ * @returns {Object} { isEligible, excludedReason, excludedReasons }
+ */
+export function evaluateEligibility(profile, requirements) {
+  const excludedReasons = [] // 모든 제외 사유 (로그용)
+
+  if (!profile || !requirements) {
+    return {
+      isEligible: false,
+      excludedReason: { code: 'NO_DATA', message: '프로필 또는 요건 정보 없음' },
+      excludedReasons: [{ code: 'NO_DATA', message: '프로필 또는 요건 정보 없음', priority: PRIORITY.P0, confidence: CONFIDENCE.HIGH }],
+    }
+  }
+
+  // 1️⃣ 명시적 제외조건 (P0 - 최우선)
+  if (requirements.exclusions?.confidence === CONFIDENCE.HIGH) {
+    for (const match of requirements.exclusions.matches || []) {
+      if (match.type === 'sole' && profile.companyType === 'sole') {
+        excludedReasons.push({
+          code: EXCLUSION_CODES.COMPANY_TYPE_SOLE_EXCLUDED,
+          message: match.message,
+          priority: PRIORITY.P0,
+          confidence: match.confidence,
+        })
+      }
+      if (match.type === 'nonprofit' && profile.companyType === 'nonprofit') {
+        excludedReasons.push({
+          code: EXCLUSION_CODES.COMPANY_TYPE_NONPROFIT_EXCLUDED,
+          message: match.message,
+          priority: PRIORITY.P0,
+          confidence: match.confidence,
+        })
+      }
+      if (match.type === 'midsize' && profile.companyType === 'midsize') {
+        excludedReasons.push({
+          code: EXCLUSION_CODES.COMPANY_TYPE_MIDSIZE_EXCLUDED,
+          message: match.message,
+          priority: PRIORITY.P0,
+          confidence: match.confidence,
+        })
+      }
+      if (match.type === 'preliminary' && profile.companyType === 'preliminary') {
+        excludedReasons.push({
+          code: EXCLUSION_CODES.COMPANY_TYPE_PRELIMINARY_EXCLUDED,
+          message: match.message,
+          priority: PRIORITY.P0,
+          confidence: match.confidence,
+        })
+      }
+    }
+  }
+
+  // 2️⃣ 기업형태 (P1)
+  if (profile.companyType && requirements.companyType) {
+    const compReq = requirements.companyType
+
+    // HIGH confidence 제외 조건만 적용
+    if (compReq.confidence === CONFIDENCE.HIGH) {
+      // 제외 목록에 포함
+      if (compReq.excluded.includes(profile.companyType)) {
+        excludedReasons.push({
+          code: `COMPANY_TYPE_${profile.companyType.toUpperCase()}_EXCLUDED`,
+          message: `${COMPANY_TYPE_LABELS[profile.companyType]}는 지원 대상에서 제외`,
+          priority: PRIORITY.P1,
+          confidence: CONFIDENCE.HIGH,
+        })
+      }
+
+      // 법인만 가능
+      if (compReq.required.includes('corporation')) {
+        if (profile.companyType === 'preliminary' || profile.companyType === 'sole') {
+          excludedReasons.push({
+            code: EXCLUSION_CODES.COMPANY_TYPE_CORP_ONLY,
+            message: '법인기업에 한함 (개인사업자/예비창업자 불가)',
+            priority: PRIORITY.P1,
+            confidence: CONFIDENCE.HIGH,
+          })
+        }
+      }
+
+      // 예비창업자 전용
+      if (compReq.required.includes('preliminary')) {
+        if (profile.companyType !== 'preliminary') {
+          excludedReasons.push({
+            code: EXCLUSION_CODES.COMPANY_TYPE_PRELIMINARY_ONLY,
+            message: '예비창업자 대상 공고 (기창업 기업 불가)',
+            priority: PRIORITY.P1,
+            confidence: CONFIDENCE.HIGH,
+          })
+        }
+      }
+    }
+
+    // 소상공인 전용은 항상 로그만 (confidence LOW 고정)
+    const smallbizDetail = compReq.details?.find(d => d.type === 'smallbizOnly')
+    if (smallbizDetail) {
+      excludedReasons.push({
+        code: EXCLUSION_CODES.COMPANY_TYPE_SMALLBIZ_ONLY,
+        message: smallbizDetail.message,
+        priority: PRIORITY.P1,
+        confidence: CONFIDENCE.LOW, // 절대 제외 트리거 안함
+      })
+    }
+  }
+
+  // 3️⃣ 지역 (P2)
+  if (profile.region && requirements.region) {
+    const regionReq = requirements.region
+
+    if (regionReq.type === 'restricted' && regionReq.confidence === CONFIDENCE.HIGH) {
+      if (profile.region !== regionReq.region) {
+        const regionName = getRegionName(regionReq.region, regionReq.detectedCity)
+        excludedReasons.push({
+          code: EXCLUSION_CODES.REGION_MISMATCH,
+          message: `${regionName} 소재 기업만 지원 가능`,
+          priority: PRIORITY.P2,
+          confidence: CONFIDENCE.HIGH,
+        })
+      }
+    }
+  }
+
+  // 4️⃣ 업력 (P3)
+  if (profile.businessAge && requirements.age) {
+    const ageReq = requirements.age
+    const profileYears = parseBusinessAgeYears(profile.businessAge)
+
+    // HIGH confidence인 경우에만 제외 트리거
+    if (ageReq.confidence === CONFIDENCE.HIGH) {
+      // 예비창업자 전용
+      if (ageReq.preliminaryOnly && !profileYears.isPreliminary) {
+        excludedReasons.push({
+          code: EXCLUSION_CODES.BUSINESS_AGE_PRELIMINARY_ONLY,
+          message: '예비창업자 전용 공고 (기창업 기업 불가)',
+          priority: PRIORITY.P3,
+          confidence: CONFIDENCE.HIGH,
+        })
+      }
+
+      // 기창업자만
+      if (ageReq.establishedOnly && profileYears.isPreliminary) {
+        excludedReasons.push({
+          code: EXCLUSION_CODES.BUSINESS_AGE_ESTABLISHED_ONLY,
+          message: '기창업 기업 대상 공고 (사업자등록 필수)',
+          priority: PRIORITY.P3,
+          confidence: CONFIDENCE.HIGH,
+        })
+      }
+
+      // 업력 초과
+      if (ageReq.maxYears !== undefined && ageReq.maxYears > 0) {
+        if (profileYears.min > ageReq.maxYears) {
+          excludedReasons.push({
+            code: EXCLUSION_CODES.BUSINESS_AGE_EXCEEDED,
+            message: `업력 ${ageReq.maxYears}년 이내 기업만 지원 가능`,
+            priority: PRIORITY.P3,
+            confidence: CONFIDENCE.HIGH,
+          })
+        }
+      }
+
+      // 업력 부족
+      if (ageReq.minYears !== undefined) {
+        if (profileYears.max < ageReq.minYears) {
+          excludedReasons.push({
+            code: EXCLUSION_CODES.BUSINESS_AGE_INSUFFICIENT,
+            message: `업력 ${ageReq.minYears}년 이상 기업만 지원 가능`,
+            priority: PRIORITY.P3,
+            confidence: CONFIDENCE.HIGH,
+          })
+        }
+      }
+    } else {
+      // LOW/MEDIUM은 로그만
+      if (ageReq.maxYears !== undefined && profileYears.min > ageReq.maxYears) {
+        excludedReasons.push({
+          code: EXCLUSION_CODES.BUSINESS_AGE_EXCEEDED,
+          message: `업력 ${ageReq.maxYears}년 이내 조건 (미확정)`,
+          priority: PRIORITY.P3,
+          confidence: ageReq.confidence,
+        })
+      }
+    }
+  }
+
+  // 5️⃣ 필수요건/인증 (P4)
+  if (requirements.mandatory?.confidence === CONFIDENCE.HIGH) {
+    const certifications = profile.certifications || []
+
+    for (const match of requirements.mandatory.matches || []) {
+      if (match.type === 'venture' && !certifications.includes('venture')) {
+        excludedReasons.push({
+          code: EXCLUSION_CODES.CERTIFICATION_VENTURE_REQUIRED,
+          message: match.message,
+          priority: PRIORITY.P4,
+          confidence: match.confidence,
+        })
+      }
+      if (match.type === 'innobiz' && !certifications.includes('innobiz')) {
+        excludedReasons.push({
+          code: EXCLUSION_CODES.CERTIFICATION_INNOBIZ_REQUIRED,
+          message: match.message,
+          priority: PRIORITY.P4,
+          confidence: match.confidence,
+        })
+      }
+      if (match.type === 'mainbiz' && !certifications.includes('mainbiz')) {
+        excludedReasons.push({
+          code: EXCLUSION_CODES.CERTIFICATION_MAINBIZ_REQUIRED,
+          message: match.message,
+          priority: PRIORITY.P4,
+          confidence: match.confidence,
+        })
+      }
+      if (match.type === 'research' && !certifications.includes('research')) {
+        excludedReasons.push({
+          code: EXCLUSION_CODES.CERTIFICATION_RESEARCH_REQUIRED,
+          message: match.message,
+          priority: PRIORITY.P4,
+          confidence: match.confidence,
+        })
+      }
+      if (match.type === 'patent' && !certifications.includes('patent')) {
+        excludedReasons.push({
+          code: EXCLUSION_CODES.CERTIFICATION_PATENT_REQUIRED,
+          message: match.message,
+          priority: PRIORITY.P4,
+          confidence: match.confidence,
+        })
+      }
+    }
+  }
+
+  // HIGH confidence 제외 사유만 필터링
+  const highConfidenceReasons = excludedReasons.filter(r => r.confidence === CONFIDENCE.HIGH)
+
+  // 우선순위 정렬 후 대표 1개 선택
+  highConfidenceReasons.sort((a, b) => a.priority - b.priority)
+
+  const isEligible = highConfidenceReasons.length === 0
+  const excludedReason = highConfidenceReasons[0]
+    ? { code: highConfidenceReasons[0].code, message: highConfidenceReasons[0].message }
+    : null
+
+  return {
+    isEligible,
+    excludedReason,
+    excludedReasons, // 디버깅용 전체 로그
+  }
+}
+
+/**
+ * 공고의 기업형태 요구사항 추출 (기존 호환용 - 내부에서만 사용)
  * @param {string} text - 공고 전체 텍스트
  * @returns {Object} { required: string[], excluded: string[] }
  */
@@ -862,234 +1738,44 @@ function checkMandatoryRequirements(mandatoryText, exclusionText, profile) {
 
 /**
  * Hard Filter: 프로필이 공고의 자격 조건을 충족하는지 사전 검증
- * 점수 계산 전에 호출하여, 자격 미달 공고를 필터링
+ *
+ * [v2] Confidence 기반 시스템:
+ * - HIGH confidence 조건만 제외 트리거
+ * - MEDIUM/LOW는 로그만 남기고 통과
+ * - source별 신뢰도 게이트 적용
+ * - allowPhrase 감지 시 confidence 하향
  *
  * @param {Object} profile - 사용자 프로필
  * @param {Object} announcement - 지원사업 공고
- * @returns {Object} { isEligible: boolean, excludedReason: { code: string|null, message: string|null } }
+ * @returns {Object} { isEligible, eligible, excludedReason, excludedReasons }
  */
 export function checkEligibility(profile, announcement) {
-  // 기본 반환 형식
-  const createResult = (isEligible, code = null, message = null) => ({
-    // 기존 코드 호환성을 위해 eligible도 유지
+  // 기본 반환 형식 (기존 호환성 유지)
+  const createResult = (isEligible, code = null, message = null, excludedReasons = []) => ({
     eligible: isEligible,
     isEligible,
     excludedReason: code ? { code, message } : null,
-    // 기존 코드 호환성을 위해 단순 문자열도 유지
     ...(code ? { excludedReasonText: message } : {}),
+    excludedReasons, // 디버깅용 전체 로그
   })
 
   if (!profile || !announcement) {
     return createResult(false, 'NO_DATA', '프로필 또는 공고 정보 없음')
   }
 
-  // 통합 검색 텍스트 생성
-  const fullText = [
-    announcement.title || '',
-    announcement.summary || '',
-    ...(announcement.eligibility || []),
-    ...(announcement.category || []),
-    ...(announcement.tags || []),
-    announcement.parsed?.eligibilityText || '',
-    announcement.parsed?.exclusionText || '',
-    announcement.parsed?.mandatoryText || '',
-  ].join(' ').toLowerCase()
+  // 1. 공고에서 요건 추출 (confidence 포함)
+  const requirements = buildHardRequirements(announcement)
 
-  // ============================================================
-  // 1️⃣ 기업 형태(companyType) Hard Filter
-  // ============================================================
-  if (profile.companyType) {
-    const companyReq = extractCompanyTypeRequirements(fullText)
+  // 2. 프로필과 요건 비교 (confidence 기반 판정)
+  const evaluation = evaluateEligibility(profile, requirements)
 
-    // 1-1. 명시적 제외 조건 확인
-    if (companyReq.excluded.includes(profile.companyType)) {
-      return createResult(
-        false,
-        `COMPANY_TYPE_${profile.companyType.toUpperCase()}_EXCLUDED`,
-        `${COMPANY_TYPE_LABELS[profile.companyType]}는 지원 대상에서 제외`
-      )
-    }
-
-    // 1-2. 법인만 가능 조건
-    if (companyReq.required.includes('corporation')) {
-      if (profile.companyType === 'preliminary' || profile.companyType === 'sole') {
-        return createResult(
-          false,
-          EXCLUSION_CODES.COMPANY_TYPE_CORP_ONLY,
-          '법인기업에 한함 (개인사업자/예비창업자 불가)'
-        )
-      }
-    }
-
-    // 1-3. 예비창업자 전용 조건
-    if (companyReq.required.includes('preliminary')) {
-      if (profile.companyType !== 'preliminary') {
-        return createResult(
-          false,
-          EXCLUSION_CODES.COMPANY_TYPE_PRELIMINARY_ONLY,
-          '예비창업자 대상 공고 (기창업 기업 불가)'
-        )
-      }
-    }
-
-    // 1-4. 소상공인 전용 조건
-    if (companyReq.required.includes('smallbusiness')) {
-      if (profile.companyType !== 'sole') {
-        return createResult(
-          false,
-          EXCLUSION_CODES.COMPANY_TYPE_SMALLBIZ_ONLY,
-          '소상공인 전용 공고'
-        )
-      }
-    }
-  }
-
-  // ============================================================
-  // 2️⃣ 업력(businessAge) Hard Filter
-  // ============================================================
-  if (profile.businessAge) {
-    const ageReq = extractBusinessAgeRequirements(fullText)
-    const profileYears = parseBusinessAgeYears(profile.businessAge)
-
-    // 2-1. 예비창업자 전용 공고인데 이미 창업한 경우
-    if (ageReq.preliminaryOnly && !profileYears.isPreliminary) {
-      return createResult(
-        false,
-        EXCLUSION_CODES.BUSINESS_AGE_PRELIMINARY_ONLY,
-        '예비창업자 전용 공고 (기창업 기업 불가)'
-      )
-    }
-
-    // 2-2. 기창업자만 가능 (예비창업자 제외)
-    if (ageReq.establishedOnly && profileYears.isPreliminary) {
-      return createResult(
-        false,
-        EXCLUSION_CODES.BUSINESS_AGE_ESTABLISHED_ONLY,
-        '기창업 기업 대상 공고 (사업자등록 필수)'
-      )
-    }
-
-    // 2-3. "예비창업자 또는 1년 미만" 특수 조건
-    if (ageReq.allowPreliminary && ageReq.maxYears) {
-      // 예비창업자이거나 1년 미만이면 통과
-      if (!profileYears.isPreliminary && profileYears.min > ageReq.maxYears) {
-        return createResult(
-          false,
-          EXCLUSION_CODES.BUSINESS_AGE_EXCEEDED,
-          `예비창업자 또는 업력 ${ageReq.maxYears}년 미만 기업만 지원 가능`
-        )
-      }
-    }
-    // 2-4. 최대 업력 제한 (예: 창업 3년 이내)
-    else if (ageReq.maxYears !== undefined && ageReq.maxYears > 0) {
-      if (profileYears.min > ageReq.maxYears) {
-        return createResult(
-          false,
-          EXCLUSION_CODES.BUSINESS_AGE_EXCEEDED,
-          `업력 ${ageReq.maxYears}년 이내 기업만 지원 가능`
-        )
-      }
-    }
-
-    // 2-5. 최소 업력 제한 (예: 3년 이상)
-    if (ageReq.minYears !== undefined) {
-      if (profileYears.max < ageReq.minYears) {
-        return createResult(
-          false,
-          EXCLUSION_CODES.BUSINESS_AGE_INSUFFICIENT,
-          `업력 ${ageReq.minYears}년 이상 기업만 지원 가능`
-        )
-      }
-    }
-  }
-
-  // ============================================================
-  // 3️⃣ 지역(region) Hard Filter
-  // ============================================================
-  if (profile.region) {
-    const regionRestriction = extractRegionRestriction(announcement)
-
-    // 특정 지역 제한 공고인데 다른 지역인 경우 → 제외
-    // 단, "전국" 또는 지역 제한이 없는 경우는 통과
-    if (regionRestriction.type === 'restricted') {
-      if (profile.region !== regionRestriction.region) {
-        const regionName = getRegionName(regionRestriction.region, regionRestriction.detectedCity)
-        return createResult(
-          false,
-          EXCLUSION_CODES.REGION_MISMATCH,
-          `${regionName} 소재 기업만 지원 가능`
-        )
-      }
-    }
-  }
-
-  // ============================================================
-  // 4️⃣ 명시적 제외조건(exclusionText) Hard Filter
-  // ============================================================
-  const exclusionText = announcement.parsed?.exclusionText || ''
-  const explicitExclusion = checkExplicitExclusions(exclusionText, profile)
-  if (explicitExclusion) {
-    return createResult(false, explicitExclusion.code, explicitExclusion.message)
-  }
-
-  // ============================================================
-  // 5️⃣ 필수요건(mandatoryText) Hard Filter
-  // ============================================================
-  const mandatoryText = announcement.parsed?.mandatoryText || ''
-  const mandatoryCheck = checkMandatoryRequirements(mandatoryText, exclusionText, profile)
-  if (mandatoryCheck) {
-    return createResult(false, mandatoryCheck.code, mandatoryCheck.message)
-  }
-
-  // ============================================================
-  // 6️⃣ 매출/인원 조건 검증
-  // ============================================================
-  const revenueCondition = extractRevenueCondition(fullText)
-  if (revenueCondition && profile.revenue) {
-    const profileRevenue = parseProfileRevenue(profile.revenue)
-    if (!meetsRevenueCondition(profileRevenue, revenueCondition)) {
-      if (revenueCondition.min !== undefined && profileRevenue < revenueCondition.min) {
-        return createResult(
-          false,
-          EXCLUSION_CODES.REVENUE_MIN_NOT_MET,
-          `매출 ${revenueCondition.min}억 이상 기업만 지원 가능`
-        )
-      }
-      if (revenueCondition.max !== undefined && profileRevenue > revenueCondition.max) {
-        return createResult(
-          false,
-          EXCLUSION_CODES.REVENUE_MAX_EXCEEDED,
-          `매출 ${revenueCondition.max}억 이하 기업만 지원 가능`
-        )
-      }
-    }
-  }
-
-  const employeeCondition = extractEmployeeCondition(fullText)
-  if (employeeCondition && profile.employees) {
-    const profileEmployees = parseProfileEmployees(profile.employees)
-    if (!meetsEmployeeCondition(profileEmployees, employeeCondition)) {
-      if (employeeCondition.min !== undefined && profileEmployees < employeeCondition.min) {
-        return createResult(
-          false,
-          EXCLUSION_CODES.EMPLOYEE_MIN_NOT_MET,
-          `상시근로자 ${employeeCondition.min}인 이상 기업만 지원 가능`
-        )
-      }
-      if (employeeCondition.max !== undefined && profileEmployees > employeeCondition.max) {
-        return createResult(
-          false,
-          EXCLUSION_CODES.EMPLOYEE_MAX_EXCEEDED,
-          `상시근로자 ${employeeCondition.max}인 이하 기업만 지원 가능`
-        )
-      }
-    }
-  }
-
-  // ============================================================
-  // ✅ 모든 검증 통과
-  // ============================================================
-  return createResult(true)
+  // 3. 결과 반환 (기존 형식 유지)
+  return createResult(
+    evaluation.isEligible,
+    evaluation.excludedReason?.code || null,
+    evaluation.excludedReason?.message || null,
+    evaluation.excludedReasons || []
+  )
 }
 
 /**
