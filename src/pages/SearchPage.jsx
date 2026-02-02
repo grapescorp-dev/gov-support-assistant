@@ -1,14 +1,14 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useSearchStore } from '../stores/useSearchStore'
-import { useProfileStore, INTERESTS } from '../stores/useProfileStore'
+import { useProfileStore, INTERESTS, COMPANY_TYPES, BUSINESS_AGES, REGIONS } from '../stores/useProfileStore'
 import { useDocumentStore } from '../stores/useDocumentStore'
 import { searchAnnouncements, analyzeProgram, summarizeProgramFromDoc } from '../api/announcements'
 import { calculateMatchingScore, extractRegionRestriction, getRegionName } from '../utils/matchingScore'
 import { getAnnouncementLink } from '../utils/getAnnouncementLink'
 import { stripHtml } from '../utils/stripHtml'
 import { CollapsibleTags } from '../components/CollapsibleTags'
-import { Search, Loader2, ExternalLink, Sparkles, Filter, Calendar, Building2, Tag, ArrowUpDown, UserCircle, TrendingUp, MapPin, AlertTriangle, Briefcase, CalendarDays, Info, FileText, AlertCircle, CheckCircle2, X, ChevronDown } from 'lucide-react'
+import { Search, Loader2, ExternalLink, Sparkles, Filter, Calendar, Building2, Tag, ArrowUpDown, UserCircle, TrendingUp, MapPin, AlertTriangle, Briefcase, CalendarDays, Info, FileText, AlertCircle, CheckCircle2, X, ChevronDown, Settings, Star, Clock, Eye } from 'lucide-react'
 
 // 관심분야 카테고리 (INTERESTS에서 가져옴 - 프로필과 동일)
 const categories = ['전체', ...INTERESTS.map(i => i.value)]
@@ -78,6 +78,12 @@ export function SearchPage() {
 
   // 소스 필터 상태
   const [selectedSource, setSelectedSource] = useState('all')
+
+  // [UX 개선] 상세 필터 접기/펼치기 상태
+  const [isFilterExpanded, setIsFilterExpanded] = useState(false)
+
+  // 필터가 적용되었는지 확인 (하나라도 선택되면 true)
+  const hasActiveFilters = selectedTags.length > 0 || selectedCategory !== '전체' || selectedSource !== 'all'
 
   // 타입별 공고 수 계산
   const typeCounts = useMemo(() => {
@@ -333,34 +339,180 @@ export function SearchPage() {
   // 카테고리 변경은 클라이언트 측 필터링으로 처리 (sortedResults에서 처리됨)
   // API 재검색 불필요
 
+  // ========================================
+  // [UX 개선] 추천 공고와 전체 공고 분리
+  // - 데이터 필터링 로직 변경 없음
+  // - 이미 계산된 sortedResults를 UI에서만 분리
+  // ========================================
+  const recommendedResults = useMemo(() => {
+    if (!activeProfile) return []
+    return sortedResults.filter(p => p.matchingScore >= MATCHING_THRESHOLD)
+  }, [sortedResults, activeProfile])
+
+  const otherResults = useMemo(() => {
+    if (!activeProfile) return sortedResults
+    return sortedResults.filter(p => p.matchingScore < MATCHING_THRESHOLD)
+  }, [sortedResults, activeProfile])
+
+  // ========================================
+  // [UX 개선] 프로필 정보 라벨 변환 헬퍼
+  // ========================================
+  const getCompanyTypeLabel = (value) => COMPANY_TYPES.find(t => t.value === value)?.label || value
+  const getBusinessAgeLabel = (value) => BUSINESS_AGES.find(t => t.value === value)?.label || value
+  const getRegionLabel = (value) => REGIONS.find(t => t.value === value)?.label || value
+  const getInterestLabels = (values) => {
+    if (!values || values.length === 0) return []
+    return values.map(v => INTERESTS.find(i => i.value === v)?.label || v).slice(0, 3)
+  }
+
+  // ========================================
+  // [UX 개선] 공고 카드 배지 생성 함수
+  // - 기존 데이터 필드만 사용
+  // - UI 조건문으로 추정 기반 배지 표시
+  // ========================================
+  const getRecommendBadges = (program) => {
+    const badges = []
+
+    // 매칭률 기반 배지
+    if (program.matchingScore >= 70) {
+      badges.push({ label: '높은 적합도', color: 'bg-green-100 text-green-700', icon: Star })
+    }
+
+    // 지역 적합 배지
+    if (activeProfile?.region && !program.isRegionMismatch) {
+      const regionRestriction = program.regionRestriction
+      if (regionRestriction?.type === 'restricted' && regionRestriction.region === activeProfile.region) {
+        badges.push({ label: '지역 적합', color: 'bg-blue-100 text-blue-700', icon: MapPin })
+      }
+    }
+
+    // 예비창업 가능 배지 (태그 또는 카테고리 기반)
+    const programText = [program.title, program.summary, ...(program.tags || [])].join(' ').toLowerCase()
+    if (activeProfile?.companyType === 'preliminary' &&
+        (programText.includes('예비창업') || programText.includes('예비 창업'))) {
+      badges.push({ label: '예비창업 가능', color: 'bg-purple-100 text-purple-700', icon: CheckCircle2 })
+    }
+
+    // 마감 임박 배지
+    if (program.deadline) {
+      const daysLeft = Math.ceil((new Date(program.deadline) - new Date()) / (1000 * 60 * 60 * 24))
+      if (daysLeft > 0 && daysLeft <= 7) {
+        badges.push({ label: `D-${daysLeft}`, color: 'bg-red-100 text-red-700', icon: Clock })
+      }
+    }
+
+    return badges.slice(0, 3) // 최대 3개
+  }
+
   return (
     <div className="space-y-6">
+      {/* ========================================
+          [UX 개선] 페이지 헤더 - 의사결정 단계 강조
+          ======================================== */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h2 className="text-2xl font-bold text-gray-900">지원사업 검색</h2>
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900">지원 가능한 공고 찾기</h2>
+          <p className="text-sm text-gray-500 mt-1">
+            내 상황에 맞는 공고를 빠르게 검토하고 지원을 결정하세요
+          </p>
+        </div>
         <div className="text-sm text-gray-500">
-          {showOnlyMatched && activeProfile ? (
+          {activeProfile && recommendedResults.length > 0 ? (
             <>
-              맞춤 <span className="font-semibold text-blue-600">{sortedResults.length}</span>개
-              <span className="text-gray-400 mx-1">/</span>
-              전체 {results.length}개 공고
+              추천 <span className="font-semibold text-green-600">{recommendedResults.length}</span>개
+              <span className="text-gray-400 mx-1">·</span>
+              전체 {sortedResults.length}개
             </>
           ) : (
-            <>
-              {selectedCategory !== '전체' || selectedType !== 'all' ? (
-                <>
-                  <span className="font-semibold text-blue-600">{sortedResults.length}</span>개
-                  <span className="text-gray-400 mx-1">/</span>
-                  전체 {results.length}개 공고
-                </>
-              ) : (
-                <>총 <span className="font-semibold text-blue-600">{sortedResults.length}</span>개 공고</>
-              )}
-            </>
+            <>총 <span className="font-semibold text-blue-600">{sortedResults.length}</span>개 공고</>
           )}
         </div>
       </div>
 
-      {/* 검색바 */}
+      {/* ========================================
+          [UX 개선 #1] 프로필 요약 영역 (프로필 설정된 경우)
+          - 현재 적용 중인 프로필 핵심 정보 표시
+          - 수정 버튼은 단순 네비게이션
+          ======================================== */}
+      {activeProfile ? (
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-4 rounded-xl border border-blue-200">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-2">
+                <UserCircle size={18} className="text-blue-600" />
+                <span className="font-semibold text-gray-900">
+                  {activeProfile.serviceName || activeProfile.name || '내 프로필'}
+                </span>
+                <span className="text-xs text-gray-500">기준으로 검색 중</span>
+              </div>
+
+              {/* 프로필 핵심 정보 */}
+              <div className="flex flex-wrap gap-2 text-xs">
+                {activeProfile.companyType && (
+                  <span className="bg-white px-2 py-1 rounded border border-gray-200 text-gray-700">
+                    {getCompanyTypeLabel(activeProfile.companyType)}
+                  </span>
+                )}
+                {activeProfile.businessAge && (
+                  <span className="bg-white px-2 py-1 rounded border border-gray-200 text-gray-700">
+                    업력 {getBusinessAgeLabel(activeProfile.businessAge)}
+                  </span>
+                )}
+                {activeProfile.region && (
+                  <span className="bg-white px-2 py-1 rounded border border-gray-200 text-gray-700 flex items-center gap-1">
+                    <MapPin size={10} />
+                    {getRegionLabel(activeProfile.region)}
+                  </span>
+                )}
+                {getInterestLabels(activeProfile.interests).map((label, i) => (
+                  <span key={i} className="bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                    {label}
+                  </span>
+                ))}
+                {activeProfile.interests?.length > 3 && (
+                  <span className="text-gray-400 px-1 py-1">+{activeProfile.interests.length - 3}</span>
+                )}
+              </div>
+            </div>
+
+            <Link
+              to="/profile"
+              className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700 font-medium whitespace-nowrap"
+            >
+              <Settings size={14} />
+              수정
+            </Link>
+          </div>
+        </div>
+      ) : (
+        /* ========================================
+           [UX 개선] 프로필 미설정 안내 - 더 강조된 CTA
+           ======================================== */
+        <div className="bg-gradient-to-r from-yellow-50 to-orange-50 p-5 rounded-xl border border-yellow-200">
+          <div className="flex items-start gap-4">
+            <div className="w-12 h-12 bg-yellow-100 rounded-full flex items-center justify-center flex-shrink-0">
+              <UserCircle size={24} className="text-yellow-600" />
+            </div>
+            <div className="flex-1">
+              <h3 className="font-semibold text-gray-900 mb-1">프로필을 설정하면 맞춤 추천을 받을 수 있어요</h3>
+              <p className="text-sm text-gray-600 mb-3">
+                기업 형태, 업력, 지역, 관심 분야를 입력하면 지원 가능한 공고를 우선 추천해드립니다.
+              </p>
+              <Link
+                to="/profile"
+                className="inline-flex items-center gap-2 bg-yellow-500 text-white px-4 py-2 rounded-lg hover:bg-yellow-600 transition-colors font-medium text-sm"
+              >
+                <UserCircle size={16} />
+                프로필 설정하기
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================
+          [UX 개선 #5] 검색창 - placeholder 개선
+          ======================================== */}
       <form onSubmit={handleSearch} className="flex gap-3">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
@@ -368,7 +520,7 @@ export function SearchPage() {
             type="text"
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
-            placeholder="키워드로 검색 (예: AI, 창업, 음악, 콘텐츠)"
+            placeholder="찾고 싶은 지원사업을 입력하세요 (예: AI 스타트업, 콘텐츠 제작, 수출 바우처)"
             className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
         </div>
@@ -381,44 +533,6 @@ export function SearchPage() {
           검색
         </button>
       </form>
-
-      {/* 프로필 미설정 안내 */}
-      {!activeProfile && (
-        <div className="flex items-center gap-3 p-3 rounded-lg bg-yellow-50 border border-yellow-200">
-          <UserCircle size={20} className="text-yellow-500 flex-shrink-0" />
-          <p className="text-sm text-yellow-700">
-            프로필을 설정하면 맞춤형 공고 추천과 매칭률을 확인할 수 있습니다.
-          </p>
-          <Link
-            to="/profile"
-            className="text-sm font-medium text-yellow-600 hover:text-yellow-700 whitespace-nowrap"
-          >
-            프로필 설정 →
-          </Link>
-        </div>
-      )}
-
-      {/* 프로필 설정된 경우 맞춤 공고 토글 표시 */}
-      {activeProfile && (
-        <div className="flex items-center gap-3 p-3 rounded-lg bg-blue-50 border border-blue-200">
-          <TrendingUp size={20} className="text-blue-500 flex-shrink-0" />
-          <p className="text-sm text-blue-700">
-            <span className="font-medium">{activeProfile.serviceName || activeProfile.companyName || '내 프로필'}</span> 기준 맞춤 공고를 확인하세요.
-          </p>
-          <label className="flex items-center gap-2 cursor-pointer ml-auto">
-            <span className="text-sm font-medium text-blue-700">맞춤 공고만</span>
-            <div className="relative">
-              <input
-                type="checkbox"
-                checked={showOnlyMatched}
-                onChange={(e) => setShowOnlyMatched(e.target.checked)}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-            </div>
-          </label>
-        </div>
-      )}
 
       {/* 공고 타입 탭 */}
       <div className="border-b border-gray-200">
@@ -465,144 +579,14 @@ export function SearchPage() {
         </div>
       )}
 
-      {/* 태그 필터 (대상/지원유형 중심 - 관심분야와 역할 분리) */}
-      <div className="bg-gray-50 p-3 rounded-lg border border-gray-200">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <Tag size={14} className="text-gray-500" />
-            <span className="text-sm font-medium text-gray-700">태그 필터</span>
-            <span className="text-xs text-gray-400">(대상/지원유형)</span>
-            {selectedTags.length > 0 && (
-              <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">
-                {selectedTags.length}개 선택
-              </span>
-            )}
-          </div>
-          {selectedTags.length > 0 && (
-            <button
-              onClick={clearTagFilters}
-              className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
-            >
-              <X size={12} />
-              초기화
-            </button>
-          )}
-        </div>
-        {/* 그룹별 태그 필터 */}
-        <div className="space-y-2">
-          {Object.entries(TAG_FILTER_GROUPS).map(([group, tags]) => (
-            <div key={group} className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-xs text-gray-400 w-16 flex-shrink-0">{group}</span>
-              {tags.map((tag) => (
-                <button
-                  key={tag}
-                  onClick={() => toggleTagFilter(tag)}
-                  className={`text-xs px-2 py-1 rounded-full border transition-colors ${
-                    selectedTags.includes(tag)
-                      ? 'bg-blue-600 text-white border-blue-600'
-                      : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'
-                  }`}
-                >
-                  {tag}
-                </button>
-              ))}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* 소스 필터 */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <Building2 size={14} className="text-gray-500" />
-        <span className="text-sm text-gray-500">소스:</span>
-        {SOURCE_FILTERS.map(({ value, label }) => (
-          <button
-            key={value}
-            onClick={() => setSelectedSource(value)}
-            className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-              selectedSource === value
-                ? 'bg-gray-800 text-white'
-                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {/* 관심분야/카테고리 필터 (그룹별) */}
-      <div className="bg-gray-50 p-3 rounded-lg border border-gray-200">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <Filter size={14} className="text-gray-500" />
-            <span className="text-sm font-medium text-gray-700">관심분야 필터</span>
-            {selectedCategory !== '전체' && (
-              <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">
-                {INTERESTS.find(i => i.value === selectedCategory)?.label || selectedCategory}
-              </span>
-            )}
-          </div>
-          {selectedCategory !== '전체' && (
-            <button
-              onClick={() => handleCategoryChange('전체')}
-              className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
-            >
-              <X size={12} />
-              초기화
-            </button>
-          )}
-        </div>
-
-        {/* 전체 버튼 */}
-        <div className="flex flex-wrap gap-1.5 mb-2">
-          <button
-            onClick={() => handleCategoryChange('전체')}
-            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-              selectedCategory === '전체'
-                ? 'bg-blue-600 text-white'
-                : 'bg-white text-gray-600 border border-gray-300 hover:border-blue-400'
-            }`}
-          >
-            전체
-          </button>
-        </div>
-
-        {/* 그룹별 카테고리 (기술/산업만 - 지원유형은 태그 필터에서 처리) */}
-        <div className="space-y-2">
-          {['기술', '산업'].map(group => (
-            <div key={group} className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-xs text-gray-400 w-14 flex-shrink-0">{group}</span>
-              {INTERESTS.filter(i => i.group === group).map(interest => (
-                <button
-                  key={interest.value}
-                  onClick={() => handleCategoryChange(interest.value)}
-                  className={`px-2 py-1 rounded-full text-xs font-medium transition-colors ${
-                    selectedCategory === interest.value
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-white text-gray-600 border border-gray-300 hover:border-blue-400 hover:text-blue-600'
-                  }`}
-                >
-                  {interest.label}
-                </button>
-              ))}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* 정렬 옵션 + 마감 공고 필터 */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        {/* 정렬 옵션 + 마감 공고 필터 */}
+      {/* ========================================
+          [UX 개선 #5] 정렬/필터 영역 통합
+          - 기본 정렬 옵션은 항상 표시
+          - 상세 필터는 접을 수 있게 구성
+          ======================================== */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3 rounded-lg border border-gray-200">
+        {/* 정렬 옵션 */}
         <div className="flex items-center gap-4">
-          <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-600">
-            <input
-              type="checkbox"
-              checked={showExpired}
-              onChange={(e) => setShowExpired(e.target.checked)}
-              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-            />
-            마감된 공고 포함
-          </label>
           <div className="flex items-center gap-2">
             <ArrowUpDown size={16} className="text-gray-500" />
             <select
@@ -614,119 +598,442 @@ export function SearchPage() {
               <option value="matching">매칭률순</option>
             </select>
           </div>
+          <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-600">
+            <input
+              type="checkbox"
+              checked={showExpired}
+              onChange={(e) => setShowExpired(e.target.checked)}
+              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            마감 포함
+          </label>
         </div>
+
+        {/* 상세 필터 토글 버튼 */}
+        <button
+          onClick={() => setIsFilterExpanded(!isFilterExpanded)}
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+            hasActiveFilters
+              ? 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+          }`}
+        >
+          <Filter size={14} />
+          상세 필터
+          {hasActiveFilters && (
+            <span className="bg-blue-600 text-white text-xs px-1.5 py-0.5 rounded-full">
+              {(selectedTags.length > 0 ? 1 : 0) + (selectedCategory !== '전체' ? 1 : 0) + (selectedSource !== 'all' ? 1 : 0)}
+            </span>
+          )}
+          <ChevronDown size={14} className={`transition-transform ${isFilterExpanded ? 'rotate-180' : ''}`} />
+        </button>
       </div>
 
+      {/* 상세 필터 영역 (접기/펼치기) */}
+      {isFilterExpanded && (
+        <div className="space-y-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+          {/* 태그 필터 (대상/지원유형 중심) */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <Tag size={14} className="text-gray-500" />
+                <span className="text-sm font-medium text-gray-700">대상/지원유형</span>
+                {selectedTags.length > 0 && (
+                  <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">
+                    {selectedTags.length}개
+                  </span>
+                )}
+              </div>
+              {selectedTags.length > 0 && (
+                <button
+                  onClick={clearTagFilters}
+                  className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
+                >
+                  <X size={12} />
+                  초기화
+                </button>
+              )}
+            </div>
+            <div className="space-y-2">
+              {Object.entries(TAG_FILTER_GROUPS).map(([group, tags]) => (
+                <div key={group} className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-xs text-gray-400 w-16 flex-shrink-0">{group}</span>
+                  {tags.map((tag) => (
+                    <button
+                      key={tag}
+                      onClick={() => toggleTagFilter(tag)}
+                      className={`text-xs px-2 py-1 rounded-full border transition-colors ${
+                        selectedTags.includes(tag)
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'
+                      }`}
+                    >
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* 관심분야/카테고리 필터 */}
+          <div className="pt-3 border-t border-gray-200">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <Briefcase size={14} className="text-gray-500" />
+                <span className="text-sm font-medium text-gray-700">관심분야</span>
+                {selectedCategory !== '전체' && (
+                  <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">
+                    {INTERESTS.find(i => i.value === selectedCategory)?.label || selectedCategory}
+                  </span>
+                )}
+              </div>
+              {selectedCategory !== '전체' && (
+                <button
+                  onClick={() => handleCategoryChange('전체')}
+                  className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
+                >
+                  <X size={12} />
+                  초기화
+                </button>
+              )}
+            </div>
+
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              <button
+                onClick={() => handleCategoryChange('전체')}
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                  selectedCategory === '전체'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white text-gray-600 border border-gray-300 hover:border-blue-400'
+                }`}
+              >
+                전체
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              {['기술', '산업'].map(group => (
+                <div key={group} className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-xs text-gray-400 w-14 flex-shrink-0">{group}</span>
+                  {INTERESTS.filter(i => i.group === group).map(interest => (
+                    <button
+                      key={interest.value}
+                      onClick={() => handleCategoryChange(interest.value)}
+                      className={`px-2 py-1 rounded-full text-xs font-medium transition-colors ${
+                        selectedCategory === interest.value
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-white text-gray-600 border border-gray-300 hover:border-blue-400 hover:text-blue-600'
+                      }`}
+                    >
+                      {interest.label}
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* 소스 필터 */}
+          <div className="pt-3 border-t border-gray-200">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Building2 size={14} className="text-gray-500" />
+              <span className="text-sm font-medium text-gray-700 mr-2">소스</span>
+              {SOURCE_FILTERS.map(({ value, label }) => (
+                <button
+                  key={value}
+                  onClick={() => setSelectedSource(value)}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                    selectedSource === value
+                      ? 'bg-gray-800 text-white'
+                      : 'bg-white text-gray-600 border border-gray-300 hover:bg-gray-100'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="grid lg:grid-cols-5 gap-6">
-        {/* 검색 결과 목록 */}
-        <div className="lg:col-span-3 space-y-4">
-          <h3 className="text-lg font-semibold text-gray-800">검색 결과</h3>
+        {/* ========================================
+            [UX 개선 #2] 검색 결과 목록 - 섹션 분리
+            (A) 내 기준 추천 공고
+            (B) 전체 지원사업 공고
+            ======================================== */}
+        <div className="lg:col-span-3 space-y-6">
 
           {isLoading ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 size={32} className="animate-spin text-blue-600" />
             </div>
           ) : sortedResults.length === 0 ? (
-            <p className="text-gray-500 text-center py-12 bg-white rounded-lg border border-gray-200">
-              검색 결과가 없습니다. 다른 키워드로 검색해보세요.
-            </p>
-          ) : (
-            <div className="space-y-3 max-h-[600px] overflow-y-auto pr-2">
-              {sortedResults.map((program) => (
-                <div
-                  key={program.id}
-                  onClick={() => handleSelectProgram(program)}
-                  className={`bg-white p-4 rounded-lg border cursor-pointer transition-all ${
-                    selectedProgram?.id === program.id
-                      ? 'border-blue-500 ring-2 ring-blue-100'
-                      : 'border-gray-200 hover:border-gray-300 hover:shadow-sm'
-                  }`}
-                >
-                  <div className="flex justify-between items-start mb-2">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {/* 타입 배지 */}
-                      {program.type && program.type !== 'funding' && (
-                        <span className={`text-xs font-medium px-2 py-0.5 rounded ${
-                          program.type === 'event' ? 'bg-pink-100 text-pink-600' :
-                          program.type === 'info' ? 'bg-gray-100 text-gray-600' :
-                          'bg-gray-100 text-gray-600'
-                        }`}>
-                          {program.type === 'event' ? '행사' : program.type === 'info' ? '안내' : program.type}
-                        </span>
-                      )}
-                      <h4 className="font-medium text-gray-900">{program.title}</h4>
-                      <span
-                        className={`text-xs font-medium px-2 py-0.5 rounded flex items-center gap-1 ${
-                          program.matchingScore >= 80
-                            ? 'bg-green-100 text-green-600'
-                            : program.matchingScore >= 50
-                            ? 'bg-yellow-100 text-yellow-600'
-                            : 'bg-gray-100 text-gray-600'
-                        }`}
-                      >
-                        <TrendingUp size={12} />
-                        {program.matchingScore}%
-                      </span>
-                    </div>
-                    <a
-                      href={getAnnouncementLink(program)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      className="text-gray-400 hover:text-blue-600"
-                      title="공고 페이지로 이동"
-                    >
-                      <ExternalLink size={16} />
-                    </a>
-                  </div>
-                  <p className="text-sm text-gray-600 mb-3 line-clamp-2">
-                    {stripHtml(program.summary)}
-                  </p>
-
-                  <div className="flex flex-wrap gap-2 text-xs">
-                    <span className="flex items-center gap-1 bg-gray-100 px-2 py-1 rounded">
-                      <Building2 size={12} />
-                      {program.organization}
-                    </span>
-                    {program.budget ? (
-                      <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded font-medium">
-                        {program.budget}
-                      </span>
-                    ) : null}
-
-                    <span className="flex items-center gap-1 bg-red-100 text-red-700 px-2 py-1 rounded">
-                      <Calendar size={12} />
-                      {program.deadline}
-                    </span>
-                  </div>
-
-                  {/* 태그 배지 표시 (CollapsibleTags 컴포넌트 사용) */}
-                  {program.tags && program.tags.length > 0 && (
-                    <CollapsibleTags tags={program.tags} maxLines={2} className="mt-2" />
-                  )}
-
-                  {/* 기존 category 표시 (태그와 별도) */}
-                  <div className="flex flex-wrap gap-1 mt-2">
-                    {(program.category || []).map((cat) => (
-                      <span key={cat} className="flex items-center gap-1 text-xs text-gray-500">
-                        <Tag size={10} />
-                        {cat}
-                      </span>
-                    ))}
-                  </div>
-
-                  {/* 지역 불일치 경고 */}
-                  {program.isRegionMismatch && (
-                    <div className="flex items-center gap-1.5 mt-2 px-2 py-1 bg-orange-50 border border-orange-200 rounded text-xs text-orange-700">
-                      <AlertTriangle size={12} />
-                      <span>
-                        {getRegionName(program.regionRestriction.region, program.regionRestriction.detectedCity)} 지역 관련 공고입니다 (지원 자격을 확인하세요)
-                      </span>
-                    </div>
-                  )}
-                </div>
-              ))}
+            <div className="bg-white rounded-lg border border-gray-200 p-8 text-center">
+              <Search size={40} className="mx-auto mb-3 text-gray-300" />
+              <p className="text-gray-500 mb-2">검색 결과가 없습니다</p>
+              <p className="text-sm text-gray-400">다른 키워드나 필터 조건으로 검색해보세요</p>
             </div>
+          ) : (
+            <>
+              {/* ========================================
+                  [섹션 A] 내 기준 추천 공고
+                  ======================================== */}
+              {activeProfile && recommendedResults.length > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center">
+                      <Star size={16} className="text-green-600" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-gray-900">내 기준 추천 공고</h3>
+                      <p className="text-xs text-gray-500">프로필 기준 매칭률 {MATCHING_THRESHOLD}% 이상</p>
+                    </div>
+                    <span className="ml-auto text-sm font-medium text-green-600">{recommendedResults.length}건</span>
+                  </div>
+
+                  <div className="space-y-3">
+                    {recommendedResults.map((program) => {
+                      const badges = getRecommendBadges(program)
+                      return (
+                        <div
+                          key={program.id}
+                          onClick={() => handleSelectProgram(program)}
+                          className={`bg-white p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                            selectedProgram?.id === program.id
+                              ? 'border-green-500 ring-2 ring-green-100'
+                              : 'border-green-200 hover:border-green-300 hover:shadow-md'
+                          }`}
+                        >
+                          {/* [UX 개선 #3] 추천 배지 표시 */}
+                          {badges.length > 0 && (
+                            <div className="flex flex-wrap gap-1.5 mb-2">
+                              {badges.map((badge, i) => (
+                                <span key={i} className={`text-xs font-medium px-2 py-0.5 rounded-full flex items-center gap-1 ${badge.color}`}>
+                                  <badge.icon size={10} />
+                                  {badge.label}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+
+                          <div className="flex justify-between items-start mb-2">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 flex-wrap mb-1">
+                                {program.type && program.type !== 'funding' && (
+                                  <span className={`text-xs font-medium px-2 py-0.5 rounded ${
+                                    program.type === 'event' ? 'bg-pink-100 text-pink-600' :
+                                    program.type === 'info' ? 'bg-gray-100 text-gray-600' :
+                                    'bg-gray-100 text-gray-600'
+                                  }`}>
+                                    {program.type === 'event' ? '행사' : program.type === 'info' ? '안내' : program.type}
+                                  </span>
+                                )}
+                                <span className={`text-xs font-medium px-2 py-0.5 rounded flex items-center gap-1 ${
+                                  program.matchingScore >= 80 ? 'bg-green-100 text-green-600' :
+                                  program.matchingScore >= 50 ? 'bg-yellow-100 text-yellow-600' :
+                                  'bg-gray-100 text-gray-600'
+                                }`}>
+                                  <TrendingUp size={12} />
+                                  {program.matchingScore}%
+                                </span>
+                              </div>
+                              <h4 className="font-semibold text-gray-900">{program.title}</h4>
+                            </div>
+                            <a
+                              href={getAnnouncementLink(program)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-gray-400 hover:text-blue-600 ml-2"
+                              title="공고 페이지로 이동"
+                            >
+                              <ExternalLink size={16} />
+                            </a>
+                          </div>
+
+                          <p className="text-sm text-gray-600 mb-3 line-clamp-2">
+                            {stripHtml(program.summary)}
+                          </p>
+
+                          <div className="flex flex-wrap gap-2 text-xs mb-2">
+                            <span className="flex items-center gap-1 bg-gray-100 px-2 py-1 rounded">
+                              <Building2 size={12} />
+                              {program.organization}
+                            </span>
+                            {program.budget && (
+                              <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded font-medium">
+                                {program.budget}
+                              </span>
+                            )}
+                            <span className="flex items-center gap-1 bg-red-100 text-red-700 px-2 py-1 rounded">
+                              <Calendar size={12} />
+                              {program.deadline}
+                            </span>
+                          </div>
+
+                          {program.tags && program.tags.length > 0 && (
+                            <CollapsibleTags tags={program.tags} maxLines={1} className="mb-2" />
+                          )}
+
+                          {program.isRegionMismatch && (
+                            <div className="flex items-center gap-1.5 mb-3 px-2 py-1 bg-orange-50 border border-orange-200 rounded text-xs text-orange-700">
+                              <AlertTriangle size={12} />
+                              <span>
+                                {getRegionName(program.regionRestriction.region, program.regionRestriction.detectedCity)} 지역 관련 공고
+                              </span>
+                            </div>
+                          )}
+
+                          {/* [UX 개선 #4] 행동 유도 버튼 */}
+                          <div className="flex gap-2 pt-2 border-t border-gray-100">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleSelectProgram(program)
+                              }}
+                              className="flex-1 flex items-center justify-center gap-1.5 py-2 text-sm font-medium text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
+                            >
+                              <Eye size={14} />
+                              상세 검토
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                // stub: 관심 공고 저장 기능 (서버 연동 없음)
+                                console.log('[관심 공고] 저장:', program.id)
+                              }}
+                              className="flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                            >
+                              <Star size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* ========================================
+                  [섹션 B] 전체 지원사업 공고
+                  ======================================== */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 bg-gray-100 rounded-lg flex items-center justify-center">
+                    <Briefcase size={16} className="text-gray-600" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-gray-900">
+                      {activeProfile && recommendedResults.length > 0 ? '기타 지원사업' : '전체 지원사업'}
+                    </h3>
+                    <p className="text-xs text-gray-500">
+                      {activeProfile && recommendedResults.length > 0
+                        ? '추천 기준 외 공고도 확인해보세요'
+                        : '조건에 맞는 공고를 검토해보세요'
+                      }
+                    </p>
+                  </div>
+                  <span className="ml-auto text-sm font-medium text-gray-500">
+                    {activeProfile ? otherResults.length : sortedResults.length}건
+                  </span>
+                </div>
+
+                <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
+                  {(activeProfile ? otherResults : sortedResults).map((program) => (
+                    <div
+                      key={program.id}
+                      onClick={() => handleSelectProgram(program)}
+                      className={`bg-white p-4 rounded-lg border cursor-pointer transition-all ${
+                        selectedProgram?.id === program.id
+                          ? 'border-blue-500 ring-2 ring-blue-100'
+                          : 'border-gray-200 hover:border-gray-300 hover:shadow-sm'
+                      }`}
+                    >
+                      <div className="flex justify-between items-start mb-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {program.type && program.type !== 'funding' && (
+                            <span className={`text-xs font-medium px-2 py-0.5 rounded ${
+                              program.type === 'event' ? 'bg-pink-100 text-pink-600' :
+                              program.type === 'info' ? 'bg-gray-100 text-gray-600' :
+                              'bg-gray-100 text-gray-600'
+                            }`}>
+                              {program.type === 'event' ? '행사' : program.type === 'info' ? '안내' : program.type}
+                            </span>
+                          )}
+                          <h4 className="font-medium text-gray-900">{program.title}</h4>
+                          {activeProfile && (
+                            <span className={`text-xs font-medium px-2 py-0.5 rounded flex items-center gap-1 ${
+                              program.matchingScore >= 80 ? 'bg-green-100 text-green-600' :
+                              program.matchingScore >= 50 ? 'bg-yellow-100 text-yellow-600' :
+                              'bg-gray-100 text-gray-600'
+                            }`}>
+                              <TrendingUp size={12} />
+                              {program.matchingScore}%
+                            </span>
+                          )}
+                        </div>
+                        <a
+                          href={getAnnouncementLink(program)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-gray-400 hover:text-blue-600"
+                          title="공고 페이지로 이동"
+                        >
+                          <ExternalLink size={16} />
+                        </a>
+                      </div>
+
+                      <p className="text-sm text-gray-600 mb-3 line-clamp-2">
+                        {stripHtml(program.summary)}
+                      </p>
+
+                      <div className="flex flex-wrap gap-2 text-xs">
+                        <span className="flex items-center gap-1 bg-gray-100 px-2 py-1 rounded">
+                          <Building2 size={12} />
+                          {program.organization}
+                        </span>
+                        {program.budget && (
+                          <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded font-medium">
+                            {program.budget}
+                          </span>
+                        )}
+                        <span className="flex items-center gap-1 bg-red-100 text-red-700 px-2 py-1 rounded">
+                          <Calendar size={12} />
+                          {program.deadline}
+                        </span>
+                      </div>
+
+                      {program.tags && program.tags.length > 0 && (
+                        <CollapsibleTags tags={program.tags} maxLines={2} className="mt-2" />
+                      )}
+
+                      {(program.category || []).length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {program.category.map((cat) => (
+                            <span key={cat} className="flex items-center gap-1 text-xs text-gray-500">
+                              <Tag size={10} />
+                              {cat}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {program.isRegionMismatch && (
+                        <div className="flex items-center gap-1.5 mt-2 px-2 py-1 bg-orange-50 border border-orange-200 rounded text-xs text-orange-700">
+                          <AlertTriangle size={12} />
+                          <span>
+                            {getRegionName(program.regionRestriction.region, program.regionRestriction.detectedCity)} 지역 관련
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
           )}
         </div>
 
