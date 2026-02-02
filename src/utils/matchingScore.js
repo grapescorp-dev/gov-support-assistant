@@ -492,6 +492,359 @@ export function extractRegionRestriction(announcement) {
   return { type: 'unknown' }
 }
 
+// ==============================================
+// 자격 검증 (Eligibility Check) - 점수 계산 전 필터링
+// ==============================================
+
+/**
+ * 공고의 기업형태 요구사항 추출
+ * @param {string} text - 공고 전체 텍스트
+ * @returns {Object} { required: string[], excluded: string[] }
+ */
+function extractCompanyTypeRequirements(text) {
+  const required = []
+  const excluded = []
+
+  // 법인만 가능 패턴
+  if (
+    text.includes('법인만') ||
+    text.includes('법인에 한') ||
+    text.includes('법인 한정') ||
+    text.includes('법인기업만') ||
+    text.includes('법인 기업만') ||
+    /법인\s*(사업자)?\s*대상/.test(text)
+  ) {
+    required.push('corporation')
+    excluded.push('preliminary', 'sole')
+  }
+
+  // 개인사업자 제외 패턴
+  if (
+    text.includes('개인사업자 불가') ||
+    text.includes('개인사업자 제외') ||
+    text.includes('개인 제외') ||
+    text.includes('개인사업자는 제외') ||
+    text.includes('개인 불가')
+  ) {
+    excluded.push('sole')
+  }
+
+  // 예비창업자 제외 패턴 (기창업자만)
+  if (
+    text.includes('예비창업자 불가') ||
+    text.includes('예비창업 제외') ||
+    text.includes('기창업자만') ||
+    text.includes('기창업 기업') ||
+    text.includes('창업기업만') ||
+    text.includes('기존 사업자') ||
+    /사업자\s*등록\s*(필수|완료)/.test(text)
+  ) {
+    excluded.push('preliminary')
+  }
+
+  // 예비창업자 전용 패턴
+  if (
+    text.includes('예비창업자만') ||
+    text.includes('예비창업자 대상') ||
+    text.includes('예비창업자 전용') ||
+    /예비\s*창업(자|팀)?\s*(한정|대상|만)/.test(text)
+  ) {
+    required.push('preliminary')
+  }
+
+  // 중소기업만 (중견기업 제외)
+  if (
+    text.includes('중소기업만') ||
+    text.includes('중견기업 제외') ||
+    text.includes('대기업 제외') ||
+    text.includes('중소기업에 한')
+  ) {
+    excluded.push('midsize')
+  }
+
+  // 소상공인 전용
+  if (
+    text.includes('소상공인만') ||
+    text.includes('소상공인 대상') ||
+    text.includes('소상공인 전용') ||
+    text.includes('소상공인에 한')
+  ) {
+    required.push('smallbusiness')
+  }
+
+  return { required: [...new Set(required)], excluded: [...new Set(excluded)] }
+}
+
+/**
+ * 공고의 업력(사업단계) 요구사항 추출
+ * @param {string} text - 공고 전체 텍스트
+ * @returns {Object} { minYears?: number, maxYears?: number, stage?: string }
+ */
+function extractBusinessAgeRequirements(text) {
+  const requirements = {}
+
+  // "창업 N년 이내" 패턴
+  const withinMatch = text.match(/창업\s*(\d+)\s*년\s*(이내|미만)/)
+  if (withinMatch) {
+    requirements.maxYears = parseInt(withinMatch[1])
+  }
+
+  // "N년 이상" 패턴
+  const overMatch = text.match(/(\d+)\s*년\s*이상\s*(기업|업력|창업)/)
+  if (overMatch) {
+    requirements.minYears = parseInt(overMatch[1])
+  }
+
+  // 초기창업 패턴 (3년 이내)
+  if (
+    text.includes('초기창업') ||
+    text.includes('초기 창업') ||
+    text.includes('신규창업') ||
+    text.includes('신규 창업')
+  ) {
+    requirements.maxYears = requirements.maxYears || 3
+    requirements.stage = 'early'
+  }
+
+  // 예비창업 전용
+  if (
+    text.includes('예비창업자만') ||
+    text.includes('예비창업자 대상') ||
+    text.includes('예비창업 전용')
+  ) {
+    requirements.stage = 'preliminary'
+    requirements.maxYears = 0
+  }
+
+  // 성장단계 (3-7년)
+  if (
+    text.includes('성장단계') ||
+    text.includes('도약단계') ||
+    text.includes('스케일업')
+  ) {
+    requirements.minYears = requirements.minYears || 3
+    requirements.stage = 'growth'
+  }
+
+  return requirements
+}
+
+/**
+ * 프로필 업력을 연수로 변환
+ * @param {string} businessAge - 프로필의 businessAge 값
+ * @returns {Object} { min: number, max: number }
+ */
+function parseBusinessAgeYears(businessAge) {
+  const mapping = {
+    preliminary: { min: 0, max: 0 },
+    under1: { min: 0, max: 1 },
+    '1to3': { min: 1, max: 3 },
+    '3to7': { min: 3, max: 7 },
+    over7: { min: 7, max: 100 },
+  }
+  return mapping[businessAge] || { min: 0, max: 0 }
+}
+
+/**
+ * 프로필이 공고의 자격 조건을 충족하는지 사전 검증
+ * 점수 계산 전에 호출하여, 자격 미달 공고를 필터링
+ *
+ * @param {Object} profile - 사용자 프로필
+ * @param {Object} announcement - 지원사업 공고
+ * @returns {Object} { eligible: boolean, excludedReason: string | null }
+ */
+export function checkEligibility(profile, announcement) {
+  if (!profile || !announcement) {
+    return { eligible: false, excludedReason: '프로필 또는 공고 정보 없음' }
+  }
+
+  // 통합 검색 텍스트 생성
+  const fullText = [
+    announcement.title || '',
+    announcement.summary || '',
+    ...(announcement.eligibility || []),
+    ...(announcement.category || []),
+    ...(announcement.tags || []),
+    announcement.parsed?.eligibilityText || '',
+    announcement.parsed?.exclusionText || '',
+    announcement.parsed?.mandatoryText || '',
+  ].join(' ').toLowerCase()
+
+  // ============================================================
+  // 1. 기업 형태 불일치 검증
+  // ============================================================
+  if (profile.companyType) {
+    const companyReq = extractCompanyTypeRequirements(fullText)
+
+    // 제외 조건 확인
+    if (companyReq.excluded.includes(profile.companyType)) {
+      const typeLabels = {
+        preliminary: '예비창업자',
+        sole: '개인사업자',
+        sme: '중소기업',
+        midsize: '중견기업',
+        nonprofit: '비영리단체',
+      }
+      return {
+        eligible: false,
+        excludedReason: `기업형태 제외: ${typeLabels[profile.companyType]}는 지원 불가`,
+      }
+    }
+
+    // 필수 조건 확인 (예: 법인만 가능)
+    if (companyReq.required.length > 0) {
+      // 법인만 가능인데 개인/예비창업자인 경우
+      if (companyReq.required.includes('corporation')) {
+        if (profile.companyType === 'preliminary' || profile.companyType === 'sole') {
+          return {
+            eligible: false,
+            excludedReason: '법인 기업만 지원 가능 (개인사업자/예비창업자 불가)',
+          }
+        }
+      }
+
+      // 예비창업자 전용인데 이미 창업한 경우
+      if (companyReq.required.includes('preliminary')) {
+        if (profile.companyType !== 'preliminary') {
+          return {
+            eligible: false,
+            excludedReason: '예비창업자 전용 공고 (기창업 기업 불가)',
+          }
+        }
+      }
+
+      // 소상공인 전용
+      if (companyReq.required.includes('smallbusiness')) {
+        if (profile.companyType !== 'sole') {
+          return {
+            eligible: false,
+            excludedReason: '소상공인 전용 공고',
+          }
+        }
+      }
+    }
+  }
+
+  // ============================================================
+  // 2. 업력(사업 단계) 불일치 검증
+  // ============================================================
+  if (profile.businessAge) {
+    const ageReq = extractBusinessAgeRequirements(fullText)
+    const profileYears = parseBusinessAgeYears(profile.businessAge)
+
+    // 예비창업자 전용 공고인데 이미 창업한 경우
+    if (ageReq.stage === 'preliminary' && profile.businessAge !== 'preliminary') {
+      return {
+        eligible: false,
+        excludedReason: '예비창업자 전용 공고 (기창업 기업 불가)',
+      }
+    }
+
+    // 최대 업력 제한 (예: 창업 3년 이내)
+    if (ageReq.maxYears !== undefined && ageReq.maxYears > 0) {
+      if (profileYears.min > ageReq.maxYears) {
+        return {
+          eligible: false,
+          excludedReason: `업력 초과: 창업 ${ageReq.maxYears}년 이내 기업만 지원 가능`,
+        }
+      }
+    }
+
+    // 최소 업력 제한 (예: 3년 이상)
+    if (ageReq.minYears !== undefined) {
+      if (profileYears.max < ageReq.minYears) {
+        return {
+          eligible: false,
+          excludedReason: `업력 부족: ${ageReq.minYears}년 이상 기업만 지원 가능`,
+        }
+      }
+    }
+  }
+
+  // ============================================================
+  // 3. 지역 조건 불일치 검증
+  // ============================================================
+  if (profile.region) {
+    const regionRestriction = extractRegionRestriction(announcement)
+
+    // 특정 지역 제한 공고인데 다른 지역인 경우
+    if (regionRestriction.type === 'restricted') {
+      if (profile.region !== regionRestriction.region) {
+        const regionName = getRegionName(regionRestriction.region, regionRestriction.detectedCity)
+        return {
+          eligible: false,
+          excludedReason: `지역 제한: ${regionName} 소재 기업만 지원 가능`,
+        }
+      }
+    }
+  }
+
+  // ============================================================
+  // 4. 매출/인원 조건 검증
+  // ============================================================
+  const revenueCondition = extractRevenueCondition(fullText)
+  if (revenueCondition && profile.revenue) {
+    const profileRevenue = parseProfileRevenue(profile.revenue)
+    if (!meetsRevenueCondition(profileRevenue, revenueCondition)) {
+      if (revenueCondition.min !== undefined) {
+        return {
+          eligible: false,
+          excludedReason: `매출 조건 미충족: 매출 ${revenueCondition.min}억 이상 필요`,
+        }
+      }
+      if (revenueCondition.max !== undefined) {
+        return {
+          eligible: false,
+          excludedReason: `매출 조건 초과: 매출 ${revenueCondition.max}억 이하 기업만 가능`,
+        }
+      }
+    }
+  }
+
+  const employeeCondition = extractEmployeeCondition(fullText)
+  if (employeeCondition && profile.employees) {
+    const profileEmployees = parseProfileEmployees(profile.employees)
+    if (!meetsEmployeeCondition(profileEmployees, employeeCondition)) {
+      if (employeeCondition.min !== undefined) {
+        return {
+          eligible: false,
+          excludedReason: `인원 조건 미충족: ${employeeCondition.min}인 이상 필요`,
+        }
+      }
+      if (employeeCondition.max !== undefined) {
+        return {
+          eligible: false,
+          excludedReason: `인원 조건 초과: ${employeeCondition.max}인 이하 기업만 가능`,
+        }
+      }
+    }
+  }
+
+  // ============================================================
+  // 5. 추가 제외 조건 검증 (parsed.exclusionText 기반)
+  // ============================================================
+  const exclusionText = (announcement.parsed?.exclusionText || '').toLowerCase()
+
+  if (exclusionText) {
+    // 동일 사업 중복 참여 제한 (검증 불가 - 통과)
+    // 채무불이행, 국세체납 등 (검증 불가 - 통과)
+
+    // 특정 인증 필수 확인
+    if (
+      (exclusionText.includes('벤처기업 인증 필수') || exclusionText.includes('벤처인증 필수')) &&
+      (!profile.certifications || !profile.certifications.includes('venture'))
+    ) {
+      return {
+        eligible: false,
+        excludedReason: '벤처기업 인증 필수 공고',
+      }
+    }
+  }
+
+  // 모든 검증 통과
+  return { eligible: true, excludedReason: null }
+}
+
 /**
  * 텍스트에서 키워드 매칭 점수 계산 (서비스 정보용)
  * @param {string} profileText - 프로필 텍스트 (businessOverview, targetMarket 등)

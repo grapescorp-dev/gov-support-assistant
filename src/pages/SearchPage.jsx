@@ -4,7 +4,7 @@ import { useSearchStore } from '../stores/useSearchStore'
 import { useProfileStore, INTERESTS, COMPANY_TYPES, BUSINESS_AGES, REGIONS } from '../stores/useProfileStore'
 import { useDocumentStore } from '../stores/useDocumentStore'
 import { searchAnnouncements, analyzeProgram, summarizeProgramFromDoc } from '../api/announcements'
-import { calculateMatchingScore, extractRegionRestriction, getRegionName } from '../utils/matchingScore'
+import { calculateMatchingScore, extractRegionRestriction, getRegionName, checkEligibility } from '../utils/matchingScore'
 import { getAnnouncementLink } from '../utils/getAnnouncementLink'
 import { stripHtml } from '../utils/stripHtml'
 import { CollapsibleTags } from '../components/CollapsibleTags'
@@ -108,12 +108,19 @@ export function SearchPage() {
         regionRestriction.type === 'restricted' &&
         regionRestriction.region !== activeProfile.region
 
+      // 자격 검증 수행 (프로필이 있을 때만)
+      const eligibilityResult = activeProfile
+        ? checkEligibility(activeProfile, program)
+        : { eligible: true, excludedReason: null }
+
       return {
         ...program,
         matchingScore: calculateMatchingScore(activeProfile, program),
         isExpired: program.deadline ? new Date(program.deadline) < today : false,
         regionRestriction,
         isRegionMismatch,
+        eligible: eligibilityResult.eligible,
+        excludedReason: eligibilityResult.excludedReason,
       }
     })
 
@@ -344,14 +351,16 @@ export function SearchPage() {
   // - 데이터 필터링 로직 변경 없음
   // - 이미 계산된 sortedResults를 UI에서만 분리
   // ========================================
+  // [매칭 정확도 개선] 추천 공고는 eligible === true인 공고만 포함
   const recommendedResults = useMemo(() => {
     if (!activeProfile) return []
-    return sortedResults.filter(p => p.matchingScore >= MATCHING_THRESHOLD)
+    return sortedResults.filter(p => p.eligible && p.matchingScore >= MATCHING_THRESHOLD)
   }, [sortedResults, activeProfile])
 
+  // [매칭 정확도 개선] 기타 공고: eligible이 false이거나 점수가 낮은 공고
   const otherResults = useMemo(() => {
     if (!activeProfile) return sortedResults
-    return sortedResults.filter(p => p.matchingScore < MATCHING_THRESHOLD)
+    return sortedResults.filter(p => !p.eligible || p.matchingScore < MATCHING_THRESHOLD)
   }, [sortedResults, activeProfile])
 
   // ========================================
