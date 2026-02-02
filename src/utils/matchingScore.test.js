@@ -7,9 +7,11 @@
  * 3. 강한 제외 표현은 정상 제외
  * 4. 소상공인 키워드 오탐 방지
  * 5. 지역 제한 정상 동작
+ * 6. Relevance Gate (도메인 적합도 미달 시 점수 상한)
+ * 7. Industry Mismatch Penalty (업종 불일치 감점)
  */
 
-import { checkEligibility, buildHardRequirements, evaluateEligibility } from './matchingScore.js'
+import { checkEligibility, buildHardRequirements, evaluateEligibility, calculateMatchingScore } from './matchingScore.js'
 
 // 테스트용 프로필
 const profiles = {
@@ -68,6 +70,26 @@ const profiles = {
     businessAge: '1to3',
     region: 'seoul',
     certifications: [],
+  },
+  // AI 기반 음악 서비스 스타트업 (Relevance Gate 테스트용)
+  aiMusicStartup: {
+    companyType: 'sme',
+    businessAge: '1to3',
+    region: 'seoul',
+    certifications: [],
+    interests: ['ai', 'ict', 'saas', 'content'],
+    serviceName: 'AI 기반 음악 추천 플랫폼',
+    businessOverview: 'AI를 활용하여 사용자 취향에 맞는 음악을 추천하고 생성하는 SaaS 서비스입니다.',
+  },
+  // 전통 제조업 (가죽/패션)
+  leatherManufacturer: {
+    companyType: 'sole',
+    businessAge: '3to7',
+    region: 'seoul',
+    certifications: [],
+    interests: ['manufacturing', 'fashion'],
+    serviceName: '가죽 패션 액세서리 제조',
+    businessOverview: '수공예 가죽 가방 및 액세서리를 제조합니다.',
   },
 }
 
@@ -331,6 +353,98 @@ const testCases = [
   },
 ]
 
+// ========================================
+// Relevance Gate & Industry Mismatch Penalty 테스트 케이스
+// ========================================
+const scoreTestCases = [
+  // 핵심 테스트: AI 스타트업 + 가죽패션 공고 => 상위 노출 금지
+  {
+    name: 'Industry Mismatch: AI 스타트업 + 가죽패션 소공인 공고 => 점수 상한 적용',
+    profile: profiles.aiMusicStartup,
+    announcement: {
+      title: '가죽패션 소공인 장비 임대지원',
+      summary: '가죽 피혁 봉제 소공인 제조장비 임대 지원사업',
+      source: 'bizinfo',
+      eligibility: ['서울 소재 소상공인', '소공인'],
+      category: ['제조', '장비지원'],
+    },
+    expected: {
+      maxScore: 49, // Relevance Gate CAP 또는 Industry Mismatch로 인해 낮은 점수
+      description: '지역 일치(서울)해도 도메인 불일치로 상위 노출 금지',
+    },
+  },
+  {
+    name: 'Industry Match: 가죽 제조업체 + 가죽패션 소공인 공고 => 높은 점수',
+    profile: profiles.leatherManufacturer,
+    announcement: {
+      title: '가죽패션 소공인 장비 임대지원',
+      summary: '가죽 피혁 봉제 소공인 제조장비 임대 지원사업',
+      source: 'bizinfo',
+      eligibility: ['서울 소재 소상공인', '소공인'],
+      category: ['제조', '장비지원'],
+    },
+    expected: {
+      minScore: 50, // 업종 일치 시 적정 점수
+      description: '업종 + 지역 일치로 높은 점수',
+    },
+  },
+  {
+    name: 'Relevance Gate: 관심분야 매칭 없이 지역만 일치 => 점수 상한',
+    profile: {
+      companyType: 'sme',
+      businessAge: '1to3',
+      region: 'seoul',
+      certifications: [],
+      interests: ['fintech', 'blockchain'], // 금융/블록체인 관심
+      serviceName: '암호화폐 거래 플랫폼',
+      businessOverview: '블록체인 기반 디지털 자산 거래 서비스',
+    },
+    announcement: {
+      title: '농업 스마트팜 장비 지원',
+      summary: '스마트팜 설비 도입 지원사업',
+      source: 'bizinfo',
+      eligibility: ['서울 소재 농업법인'],
+      category: ['농업', '스마트팜'],
+    },
+    expected: {
+      maxScore: 49, // Relevance 미달로 점수 상한
+      description: '관심분야(핀테크) vs 공고(농업) 불일치',
+    },
+  },
+  {
+    name: 'Relevance Pass: AI 스타트업 + AI 지원사업 => 높은 점수',
+    profile: profiles.aiMusicStartup,
+    announcement: {
+      title: 'AI 스타트업 기술개발 지원',
+      summary: 'AI 인공지능 기반 서비스 개발 지원사업',
+      source: 'bizinfo',
+      eligibility: ['서울 소재 중소기업'],
+      category: ['AI', 'ICT', '기술개발'],
+      tags: ['인공지능', 'AI', 'SaaS'],
+    },
+    expected: {
+      minScore: 50, // 관심분야 일치로 Relevance Gate 통과
+      description: '관심분야(AI/ICT) 일치로 높은 점수',
+    },
+  },
+  {
+    name: 'No Industry Penalty: 범용 지원사업 => 패널티 없음',
+    profile: profiles.aiMusicStartup,
+    announcement: {
+      title: '중소기업 R&D 바우처 지원',
+      summary: '중소기업 연구개발 바우처 지원사업',
+      source: 'bizinfo',
+      eligibility: ['전국 중소기업'],
+      category: ['R&D', '바우처'],
+    },
+    expected: {
+      // 범용 공고는 Industry Mismatch 없음 (특정 업종 키워드 없음)
+      noIndustryPenalty: true,
+      description: '특정 업종 키워드 없어서 패널티 없음',
+    },
+  },
+]
+
 // 테스트 실행
 function runTests() {
   console.log('='.repeat(60))
@@ -428,11 +542,68 @@ function testBuildHardRequirements() {
   }
 }
 
+// Relevance Gate & Industry Mismatch 테스트
+function testRelevanceAndIndustryMismatch() {
+  console.log('\n' + '='.repeat(60))
+  console.log('Relevance Gate & Industry Mismatch Penalty 테스트')
+  console.log('='.repeat(60))
+
+  let passed = 0
+  let failed = 0
+  const failures = []
+
+  for (const tc of scoreTestCases) {
+    const score = calculateMatchingScore(tc.profile, tc.announcement)
+    let success = true
+    let failReason = ''
+
+    // maxScore 검증
+    if (tc.expected.maxScore !== undefined && score > tc.expected.maxScore) {
+      success = false
+      failReason = `점수 상한 초과: expected <= ${tc.expected.maxScore}, got ${score}`
+    }
+
+    // minScore 검증
+    if (tc.expected.minScore !== undefined && score < tc.expected.minScore) {
+      success = false
+      failReason = `점수 하한 미달: expected >= ${tc.expected.minScore}, got ${score}`
+    }
+
+    if (success) {
+      console.log(`✅ PASS: ${tc.name} (score: ${score})`)
+      console.log(`   ${tc.expected.description}`)
+      passed++
+    } else {
+      console.log(`❌ FAIL: ${tc.name} (score: ${score})`)
+      console.log(`   ${failReason}`)
+      console.log(`   ${tc.expected.description}`)
+      failed++
+      failures.push({ name: tc.name, reason: failReason, score })
+    }
+  }
+
+  console.log('\n' + '='.repeat(60))
+  console.log(`Relevance/Industry 테스트: ${scoreTestCases.length}개 중 ${passed} 통과, ${failed} 실패`)
+  console.log('='.repeat(60))
+
+  return { passed, failed, total: scoreTestCases.length }
+}
+
 // 메인 실행
 export function runAllTests() {
-  const results = runTests()
+  const hardFilterResults = runTests()
   testBuildHardRequirements()
-  return results
+  const relevanceResults = testRelevanceAndIndustryMismatch()
+
+  const totalPassed = hardFilterResults.passed + relevanceResults.passed
+  const totalFailed = hardFilterResults.failed + relevanceResults.failed
+  const totalTests = hardFilterResults.total + relevanceResults.total
+
+  console.log('\n' + '='.repeat(60))
+  console.log(`전체 테스트 결과: ${totalTests}개 중 ${totalPassed} 통과, ${totalFailed} 실패`)
+  console.log('='.repeat(60))
+
+  return { passed: totalPassed, failed: totalFailed, total: totalTests }
 }
 
 // CLI 실행 시
@@ -440,4 +611,4 @@ if (typeof window === 'undefined' && typeof process !== 'undefined') {
   runAllTests()
 }
 
-export { testCases, profiles }
+export { testCases, scoreTestCases, profiles }

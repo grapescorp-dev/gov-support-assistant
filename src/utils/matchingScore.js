@@ -1819,8 +1819,96 @@ function calculateTextMatchScore(profileText, announcementText) {
   return matchCount
 }
 
+// ==============================================
+// Relevance Gate & Industry Mismatch 상수
+// ==============================================
+
+/**
+ * Relevance Gate: 도메인 적합도 최소 기준
+ * - interestMatchScore + serviceKeywordScore 합이 이 값 미만이면 점수 상한 적용
+ */
+const RELEVANCE_THRESHOLD = 12
+
+/**
+ * Relevance Gate 미달 시 점수 상한
+ * - 추천 목록(30점 이상)에 포함되지 않도록 49점으로 제한
+ */
+const RELEVANCE_GATE_CAP = 49
+
+/**
+ * Industry Mismatch Penalty: 업종 불일치 시 감점
+ */
+const INDUSTRY_MISMATCH_PENALTY = -30
+
+/**
+ * 업종 특화 키워드 그룹 (공고에서 탐지)
+ * - 해당 키워드가 공고에 있고, 프로필에 관련 interests가 없으면 패널티 적용
+ */
+const INDUSTRY_SPECIFIC_KEYWORDS = {
+  // 전통 제조/공방 업종
+  traditionalManufacturing: {
+    keywords: ['가죽', '피혁', '봉제', '원단', '섬유', '직물', '의류', '패션', '신발', '가방', '액세서리', '잡화',
+               '공방', '수공예', '공예품', '도자기', '목공', '가구', '인테리어', '소공인', '제조장비', '금형',
+               '주물', '주조', '단조', '도금', '절삭', '용접', '판금', '프레스', '열처리'],
+    allowedInterests: ['manufacturing', 'fashion', 'smartfactory'], // 이 interests가 있으면 패널티 면제
+  },
+  // 식품/요식업
+  food: {
+    keywords: ['식품', '요식업', '외식업', '음식점', '식당', '베이커리', '제과', '제빵', '정육', '수산', '농수산',
+               '반찬', '도시락', '케이터링', '프랜차이즈', '가맹점'],
+    allowedInterests: ['foodtech', 'bio'], // foodtech는 바이오/헬스와 연관 가능
+  },
+  // 건설/건축
+  construction: {
+    keywords: ['건설', '건축', '시공', '토목', '인테리어', '리모델링', '설비', '배관', '전기공사', '소방', '조경'],
+    allowedInterests: ['manufacturing', 'smartfactory'],
+  },
+  // 농업/축산
+  agriculture: {
+    keywords: ['농업', '축산', '양계', '양돈', '낙농', '작물', '재배', '농기계', '비료', '사료', '종자'],
+    allowedInterests: ['foodtech', 'bio', 'smartfarm'],
+  },
+  // 미용/뷰티 (오프라인)
+  beauty: {
+    keywords: ['미용실', '헤어', '네일', '피부관리', '에스테틱', '뷰티샵', '화장품', '코스메틱'],
+    allowedInterests: ['fashion', 'bio', 'healthcare'],
+  },
+}
+
+/**
+ * 프로필 텍스트에서 업종 신호가 있는지 확인
+ * @param {Object} profile - 프로필
+ * @param {string[]} industryKeywords - 업종 키워드 목록
+ * @returns {boolean} 프로필에 해당 업종 신호가 있는지
+ */
+function hasIndustrySignalInProfile(profile, industryKeywords) {
+  const profileText = [
+    profile.serviceName || '',
+    profile.businessOverview || '',
+    profile.targetMarket || '',
+  ].join(' ').toLowerCase()
+
+  return industryKeywords.some(kw => profileText.includes(kw.toLowerCase()))
+}
+
+/**
+ * 프로필 interests에 허용된 interests가 있는지 확인
+ * @param {Object} profile - 프로필
+ * @param {string[]} allowedInterests - 허용된 interests 목록
+ * @returns {boolean}
+ */
+function hasAllowedInterest(profile, allowedInterests) {
+  if (!profile.interests || profile.interests.length === 0) return false
+  return allowedInterests.some(ai => profile.interests.includes(ai))
+}
+
 /**
  * 프로필과 공고를 비교하여 매칭률 계산
+ *
+ * [v2] Relevance Gate + Industry Mismatch Penalty 추가
+ * - 도메인 적합도(관심분야+키워드 매칭)가 THRESHOLD 미만이면 점수 상한 적용
+ * - 업종 특화 공고에 무관한 프로필은 패널티 적용
+ *
  * @param {Object} profile - 사용자 프로필
  * @param {Object} announcement - 지원사업 공고
  * @returns {number} 0-100 사이의 매칭률
@@ -1829,6 +1917,20 @@ export function calculateMatchingScore(profile, announcement) {
   if (!profile || !announcement) return 0
 
   let score = 0
+
+  // 디버그용 점수 breakdown (필요시 활용)
+  const breakdown = {
+    interestScore: 0,
+    keywordScore: 0,
+    companyTypeScore: 0,
+    businessAgeScore: 0,
+    regionScore: 0,
+    certScore: 0,
+    conditionScore: 0,
+    exclusionPenalty: 0,
+    relevanceGateApplied: false,
+    industryMismatchPenalty: 0,
+  }
 
   // 통합 검색 텍스트 생성 (공고의 모든 텍스트)
   const fullSearchText = [
@@ -1851,8 +1953,8 @@ export function calculateMatchingScore(profile, announcement) {
 
   // 1-1. 관심분야(interests) 매칭 (최대 20점)
   // INTERESTS의 keywords를 활용하여 확장 매칭
+  let interestMatchCount = 0
   if (profile.interests && profile.interests.length > 0) {
-    let interestMatchCount = 0
     profile.interests.forEach(interestValue => {
       // INTERESTS에서 해당 관심분야의 keywords 가져오기
       const interestConfig = INTERESTS.find(i => i.value === interestValue)
@@ -1866,15 +1968,15 @@ export function calculateMatchingScore(profile, announcement) {
     })
     if (interestMatchCount > 0) {
       // 매칭된 관심분야 비율에 따라 점수 부여 (최대 20점)
-      const interestScore = Math.min(20, (interestMatchCount / profile.interests.length) * 25)
-      score += interestScore
+      breakdown.interestScore = Math.min(20, (interestMatchCount / profile.interests.length) * 25)
+      score += breakdown.interestScore
     }
   }
 
   // 1-2. 서비스명/사업개요 키워드 직접 매칭 (최대 15점)
   const profileKeywords = extractKeywordsFromProfile(profile)
+  let keywordMatchCount = 0
   if (profileKeywords.length > 0) {
-    let keywordMatchCount = 0
     profileKeywords.forEach(keyword => {
       if (fullSearchText.includes(keyword.toLowerCase())) {
         keywordMatchCount++
@@ -1882,9 +1984,15 @@ export function calculateMatchingScore(profile, announcement) {
     })
     if (keywordMatchCount > 0) {
       // 매칭된 키워드 수에 따라 점수 (키워드당 3점, 최대 15점)
-      score += Math.min(15, keywordMatchCount * 3)
+      breakdown.keywordScore = Math.min(15, keywordMatchCount * 3)
+      score += breakdown.keywordScore
     }
   }
+
+  // ============================================================
+  // [NEW] Relevance Score 계산 (Relevance Gate용)
+  // ============================================================
+  const relevanceScore = breakdown.interestScore + breakdown.keywordScore
 
   // ============================================================
   // 2. 기업 적격성 매칭 (최대 30점)
@@ -1902,6 +2010,7 @@ export function calculateMatchingScore(profile, announcement) {
 
     const matchKeywords = typeMatches[profile.companyType] || []
     if (matchAnyWithSynonyms(fullSearchText, matchKeywords)) {
+      breakdown.companyTypeScore = 15
       score += 15
     }
     // 기업형태 매칭 안되면 점수 없음 (기본점수 제거)
@@ -1919,6 +2028,7 @@ export function calculateMatchingScore(profile, announcement) {
 
     const matchKeywords = ageMatches[profile.businessAge] || []
     if (matchAnyWithSynonyms(fullSearchText, matchKeywords)) {
+      breakdown.businessAgeScore = 15
       score += 15
     }
     // 업력 조건이 명시되지 않은 공고는 점수 없음
@@ -1932,19 +2042,23 @@ export function calculateMatchingScore(profile, announcement) {
 
     if (regionRestriction.type === 'nationwide') {
       // 전국 대상 공고 - 기본 점수
+      breakdown.regionScore = 8
       score += 8
     } else if (regionRestriction.type === 'restricted') {
       // 특정 지역 제한 공고
       if (profile.region === regionRestriction.region) {
         // 지역 일치 - 높은 점수 (지역 맞춤 공고!)
+        breakdown.regionScore = 15
         score += 15
       } else {
         // 지역 불일치 - 큰 감점 (지원 불가 가능성 높음)
+        breakdown.regionScore = -20
         score -= 20
       }
     } else if (regionRestriction.type === 'preferred') {
       // 기관 소재지 기반 우대
       if (profile.region === regionRestriction.region) {
+        breakdown.regionScore = 12
         score += 12
       }
       // 다른 지역이면 점수 없음 (기본점수 제거)
@@ -1964,14 +2078,15 @@ export function calculateMatchingScore(profile, announcement) {
       patent: ['특허', '지식재산권', '산업재산권'],
     }
 
-    let certScore = 0
+    let certScoreTemp = 0
     profile.certifications.forEach((cert) => {
       const keywords = certMatches[cert] || []
       if (matchAnyWithSynonyms(fullSearchText, keywords)) {
-        certScore += 5
+        certScoreTemp += 5
       }
     })
-    score += Math.min(10, certScore)
+    breakdown.certScore = Math.min(10, certScoreTemp)
+    score += breakdown.certScore
   }
 
   // ============================================================
@@ -1984,9 +2099,11 @@ export function calculateMatchingScore(profile, announcement) {
   if (revenueCondition && profile.revenue) {
     const profileRevenue = parseProfileRevenue(profile.revenue)
     if (meetsRevenueCondition(profileRevenue, revenueCondition)) {
+      breakdown.conditionScore += 5
       score += 5
     } else {
       // 조건 미충족 시 감점
+      breakdown.conditionScore -= 10
       score -= 10
     }
   }
@@ -1995,9 +2112,11 @@ export function calculateMatchingScore(profile, announcement) {
   if (employeeCondition && profile.employees) {
     const profileEmployees = parseProfileEmployees(profile.employees)
     if (meetsEmployeeCondition(profileEmployees, employeeCondition)) {
+      breakdown.conditionScore += 5
       score += 5
     } else {
       // 조건 미충족 시 감점
+      breakdown.conditionScore -= 10
       score -= 10
     }
   }
@@ -2011,6 +2130,7 @@ export function calculateMatchingScore(profile, announcement) {
       (exclusionText.includes('법인만') || exclusionText.includes('법인에 한') || exclusionText.includes('법인 한정')) &&
       (profile.companyType === 'sole' || profile.companyType === 'preliminary')
     ) {
+      breakdown.exclusionPenalty -= 30
       score -= 30
     }
 
@@ -2019,6 +2139,7 @@ export function calculateMatchingScore(profile, announcement) {
       (exclusionText.includes('개인사업자 불가') || exclusionText.includes('개인사업자 제외') || exclusionText.includes('개인 제외')) &&
       profile.companyType === 'sole'
     ) {
+      breakdown.exclusionPenalty -= 30
       score -= 30
     }
 
@@ -2027,6 +2148,7 @@ export function calculateMatchingScore(profile, announcement) {
       (exclusionText.includes('예비창업자 불가') || exclusionText.includes('예비창업 제외') || exclusionText.includes('기창업자만')) &&
       profile.companyType === 'preliminary'
     ) {
+      breakdown.exclusionPenalty -= 30
       score -= 30
     }
 
@@ -2035,13 +2157,61 @@ export function calculateMatchingScore(profile, announcement) {
       (exclusionText.includes('중소기업만') || exclusionText.includes('중견기업 제외') || exclusionText.includes('대기업 제외')) &&
       profile.companyType === 'midsize'
     ) {
+      breakdown.exclusionPenalty -= 25
       score -= 25
+    }
+  }
+
+  // ============================================================
+  // 7. [NEW] Industry Mismatch Penalty (업종 불일치 감점)
+  // - 공고에 업종 특화 키워드가 있고, 프로필에 해당 업종 신호가 없으면 패널티
+  // ============================================================
+  let industryMismatchDetected = false
+
+  for (const [industryType, config] of Object.entries(INDUSTRY_SPECIFIC_KEYWORDS)) {
+    // 공고에 해당 업종 키워드가 있는지 확인
+    const hasIndustryKeywordInAnnouncement = config.keywords.some(kw =>
+      fullSearchText.includes(kw.toLowerCase())
+    )
+
+    if (hasIndustryKeywordInAnnouncement) {
+      // 프로필에 허용된 interests가 있는지 확인
+      const hasAllowedInt = hasAllowedInterest(profile, config.allowedInterests)
+
+      // 프로필 텍스트에 해당 업종 신호가 있는지 확인
+      const hasSignalInProfile = hasIndustrySignalInProfile(profile, config.keywords)
+
+      // 둘 다 없으면 mismatch
+      if (!hasAllowedInt && !hasSignalInProfile) {
+        industryMismatchDetected = true
+        break // 하나라도 mismatch면 패널티 적용
+      }
+    }
+  }
+
+  if (industryMismatchDetected) {
+    breakdown.industryMismatchPenalty = INDUSTRY_MISMATCH_PENALTY
+    score += INDUSTRY_MISMATCH_PENALTY
+  }
+
+  // ============================================================
+  // 8. [NEW] Relevance Gate (도메인 적합도 최소 기준)
+  // - 관심분야 + 키워드 매칭 점수가 THRESHOLD 미만이면 점수 상한 적용
+  // - 지역/기업형태만 일치해도 상위 노출되는 것을 방지
+  // ============================================================
+  let finalScore = Math.max(0, score)
+
+  if (relevanceScore < RELEVANCE_THRESHOLD) {
+    // Relevance Gate 미달 → 점수 상한 적용
+    if (finalScore > RELEVANCE_GATE_CAP) {
+      breakdown.relevanceGateApplied = true
+      finalScore = RELEVANCE_GATE_CAP
     }
   }
 
   // 최종 점수 (0-100)
   // 만점 기준: 키워드(35) + 적격성(30) + 지역(15) + 인증(10) + 조건(10) = 100점
-  return Math.min(100, Math.max(0, score))
+  return Math.min(100, finalScore)
 }
 
 /**
