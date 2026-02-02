@@ -1,5 +1,5 @@
 /**
- * Matching Score 테스트 (Relevance Gate & Industry Mismatch)
+ * Matching Score 테스트 (Relevance Gate, Industry Mismatch, Stage Boost)
  *
  * 실행: node test-matching-score.mjs
  */
@@ -10,36 +10,58 @@
 
 const RELEVANCE_THRESHOLD = 12
 const RELEVANCE_GATE_CAP = 49
-const INDUSTRY_MISMATCH_PENALTY = -30
+const INDUSTRY_MISMATCH_PENALTY_STRONG = -35
+const INDUSTRY_MISMATCH_PENALTY_NORMAL = -25
+const STAGE_BOOST_PRELIMINARY = 12
 
 const INDUSTRY_SPECIFIC_KEYWORDS = {
   traditionalManufacturing: {
     keywords: ['가죽', '피혁', '봉제', '원단', '섬유', '직물', '의류', '패션', '신발', '가방', '액세서리', '잡화',
-               '공방', '수공예', '공예품', '도자기', '목공', '가구', '인테리어', '소공인', '제조장비', '금형',
+               '공방', '수공예', '공예품', '도자기', '목공', '가구', '소공인', '제조장비', '금형',
                '주물', '주조', '단조', '도금', '절삭', '용접', '판금', '프레스', '열처리'],
     allowedInterests: ['manufacturing', 'fashion', 'smartfactory'],
+    penaltyLevel: 'strong',
+  },
+  facilitySpace: {
+    keywords: ['입주', '입주공간', '공유오피스', '창업공간', '창작공간', '제조공간', '공장', '작업장', '작업실',
+               '시설', '설비', '장비임대', '장비지원', '장비대여', '기자재', '공간지원', '공간임대'],
+    allowedInterests: ['manufacturing', 'smartfactory'],
+    penaltyLevel: 'strong',
   },
   food: {
-    keywords: ['식품', '음식', '외식', '요식', '급식', '케이터링', '베이커리', '제과', '제빵', '푸드트럭'],
+    keywords: ['식품', '요식업', '외식업', '음식점', '식당', '베이커리', '제과', '제빵', '정육', '수산', '농수산'],
     allowedInterests: ['foodtech', 'bio'],
+    penaltyLevel: 'normal',
   },
   construction: {
-    keywords: ['건설', '건축', '토목', '시공', '인테리어공사', '리모델링', '설비'],
-    allowedInterests: ['construction', 'realestate'],
+    keywords: ['건설', '건축', '시공', '토목', '리모델링', '배관', '전기공사', '소방', '조경'],
+    allowedInterests: ['manufacturing', 'smartfactory'],
+    penaltyLevel: 'strong',
   },
   agriculture: {
-    keywords: ['농업', '농산물', '축산', '양식', '어업', '수산', '임업', '원예', '화훼', '종묘'],
-    allowedInterests: ['agriculture', 'smartfarm', 'foodtech'],
+    keywords: ['농업', '축산', '양계', '양돈', '낙농', '작물', '재배', '농기계', '비료', '사료', '종자'],
+    allowedInterests: ['foodtech', 'bio', 'smartfarm'],
+    penaltyLevel: 'normal',
   },
   beauty: {
-    keywords: ['미용', '뷰티', '헤어', '네일', '화장품', '에스테틱', '피부관리'],
-    allowedInterests: ['beauty', 'healthcare'],
+    keywords: ['미용실', '헤어샵', '네일샵', '피부관리실', '에스테틱', '뷰티샵'],
+    allowedInterests: ['fashion', 'bio', 'healthcare'],
+    penaltyLevel: 'normal',
   },
 }
+
+const PRELIMINARY_STAGE_KEYWORDS = [
+  '예비창업', '예비 창업', '예비창업자', '창업준비', '창업 준비',
+  '아이디어', '아이디어 검증', 'poc', '초기검증', '초기 검증',
+  '사업화', '사업화 지원', '시제품', '프로토타입', 'mvp',
+  '창업교육', '창업 교육', '멘토링', '액셀러레이팅',
+  '데모데이', '데모 데이', 'ir', '투자유치',
+]
 
 // INTERESTS 정의 (간소화)
 const INTERESTS = [
   { value: 'ai', keywords: ['ai', '인공지능', '머신러닝', '딥러닝', 'gpt', 'llm'] },
+  { value: 'iot', keywords: ['iot', '사물인터넷', '센서', '스마트', '웨어러블'] },
   { value: 'ict', keywords: ['ict', '정보통신', 'it', '소프트웨어', 'sw', '디지털'] },
   { value: 'saas', keywords: ['saas', '클라우드', '구독', '플랫폼'] },
   { value: 'content', keywords: ['콘텐츠', '미디어', '영상', '음악', '음원', '게임'] },
@@ -48,6 +70,8 @@ const INTERESTS = [
   { value: 'fashion', keywords: ['패션', '의류', '신발', '가방', '액세서리'] },
   { value: 'foodtech', keywords: ['푸드테크', '식품', '음식'] },
   { value: 'agriculture', keywords: ['농업', '스마트팜', '농산물'] },
+  { value: 'bio', keywords: ['바이오', '헬스케어', '의료', '건강', '헬스', '운동', '피트니스', '웰니스'] },
+  { value: 'healthcare', keywords: ['헬스케어', '의료', '건강', '헬스', '운동', '피트니스', '웰니스', '재활', '스트레칭', '리커버리'] },
 ]
 
 function hasAllowedInterest(profile, allowedInterests) {
@@ -88,6 +112,9 @@ function calculateMatchingScore(profile, announcement) {
     companyTypeScore: 0,
     regionScore: 0,
     industryMismatchPenalty: 0,
+    industryMismatchType: null,
+    stageBoost: 0,
+    stageBoostApplied: false,
     relevanceGateApplied: false,
   }
 
@@ -167,8 +194,10 @@ function calculateMatchingScore(profile, announcement) {
     }
   }
 
-  // 5. Industry Mismatch Penalty
+  // 5. Industry Mismatch Soft Penalty
   let industryMismatchDetected = false
+  let detectedPenaltyLevel = null
+
   for (const [industryType, config] of Object.entries(INDUSTRY_SPECIFIC_KEYWORDS)) {
     const hasIndustryKeywordInAnnouncement = config.keywords.some(kw =>
       fullSearchText.includes(kw.toLowerCase())
@@ -180,17 +209,39 @@ function calculateMatchingScore(profile, announcement) {
 
       if (!hasAllowedInt && !hasSignalInProfile) {
         industryMismatchDetected = true
-        break
+        if (config.penaltyLevel === 'strong') {
+          detectedPenaltyLevel = 'strong'
+        } else if (detectedPenaltyLevel !== 'strong') {
+          detectedPenaltyLevel = 'normal'
+        }
+        if (detectedPenaltyLevel === 'strong') break
       }
     }
   }
 
   if (industryMismatchDetected) {
-    breakdown.industryMismatchPenalty = INDUSTRY_MISMATCH_PENALTY
-    score += INDUSTRY_MISMATCH_PENALTY
+    const penalty = detectedPenaltyLevel === 'strong'
+      ? INDUSTRY_MISMATCH_PENALTY_STRONG
+      : INDUSTRY_MISMATCH_PENALTY_NORMAL
+    breakdown.industryMismatchPenalty = penalty
+    breakdown.industryMismatchType = detectedPenaltyLevel
+    score += penalty
   }
 
-  // 6. Relevance Gate
+  // 6. Stage Boost (예비창업자)
+  if (profile.businessAge === 'preliminary' || profile.companyType === 'preliminary') {
+    const hasStageKeyword = PRELIMINARY_STAGE_KEYWORDS.some(kw =>
+      fullSearchText.includes(kw.toLowerCase())
+    )
+
+    if (hasStageKeyword) {
+      breakdown.stageBoost = STAGE_BOOST_PRELIMINARY
+      breakdown.stageBoostApplied = true
+      score += STAGE_BOOST_PRELIMINARY
+    }
+  }
+
+  // 7. Relevance Gate
   let finalScore = Math.max(0, score)
   if (relevanceScore < RELEVANCE_THRESHOLD) {
     if (finalScore > RELEVANCE_GATE_CAP) {
@@ -207,6 +258,16 @@ function calculateMatchingScore(profile, announcement) {
 // ============================================================
 
 const profiles = {
+  // 예비창업자: 운동 후 스트레칭/리커버리 습관 형성 앱
+  healthcareAppPreliminary: {
+    companyType: 'preliminary',
+    businessAge: 'preliminary',
+    region: 'seoul',
+    interests: ['ai', 'iot', 'content', 'bio', 'healthcare'],
+    serviceName: '운동 후 스트레칭 리커버리 습관 형성 앱',
+    businessOverview: '운동 후 스트레칭과 리커버리 루틴을 추천하고 습관화를 돕는 모바일 앱 서비스입니다.',
+  },
+  // AI 스타트업 (기존)
   aiMusicStartup: {
     companyType: 'sme',
     businessAge: '1to3',
@@ -215,6 +276,7 @@ const profiles = {
     serviceName: 'AI 기반 음악 추천 플랫폼',
     businessOverview: 'AI를 활용하여 사용자 취향에 맞는 음악을 추천하고 생성하는 SaaS 서비스입니다.',
   },
+  // 가죽 제조업체 (기존)
   leatherManufacturer: {
     companyType: 'sole',
     businessAge: '3to7',
@@ -223,6 +285,7 @@ const profiles = {
     serviceName: '가죽 패션 액세서리 제조',
     businessOverview: '수공예 가죽 가방 및 액세서리를 제조합니다.',
   },
+  // 핀테크 스타트업 (기존)
   fintechStartup: {
     companyType: 'sme',
     businessAge: '1to3',
@@ -238,8 +301,88 @@ const profiles = {
 // ============================================================
 
 const testCases = [
+  // ========== 예비창업자 헬스케어 앱 시나리오 ==========
   {
-    name: '핵심: AI 스타트업 + 가죽패션 소공인 공고 => 점수 상한 (49 이하)',
+    name: '[오탐방지] 헬스케어 앱 예비창업자 + 제조/시설/장비 공고 => 낮은 점수',
+    profile: profiles.healthcareAppPreliminary,
+    announcement: {
+      title: '소공인 제조장비 임대 지원',
+      summary: '제조 시설 및 장비 임대 지원사업',
+      eligibility: ['서울 소재 소공인', '제조업'],
+      category: ['제조', '장비지원', '시설'],
+    },
+    validate: (result) => {
+      if (result.score > 30) {
+        return { pass: false, reason: `점수 ${result.score} > 30 (제조/시설 공고인데 헬스케어 앱에 높은 점수)` }
+      }
+      if (result.breakdown.industryMismatchType !== 'strong') {
+        return { pass: false, reason: `Industry Mismatch가 'strong'이 아님: ${result.breakdown.industryMismatchType}` }
+      }
+      return { pass: true }
+    },
+  },
+  {
+    name: '[오탐방지] 헬스케어 앱 예비창업자 + 입주공간 공고 => 낮은 점수',
+    profile: profiles.healthcareAppPreliminary,
+    announcement: {
+      title: '창업공간 입주기업 모집',
+      summary: '창작공간 및 제조공간 입주 지원',
+      eligibility: ['예비창업자', '초기창업기업'],
+      category: ['공간지원', '입주'],
+    },
+    validate: (result) => {
+      // 예비창업자 키워드로 Stage Boost가 적용되더라도 시설/공간 패널티로 상쇄
+      if (result.score > 40) {
+        return { pass: false, reason: `점수 ${result.score} > 40 (공간/입주 공고인데 디지털 서비스에 높은 점수)` }
+      }
+      return { pass: true }
+    },
+  },
+  {
+    name: '[정탐] 헬스케어 앱 예비창업자 + 헬스/바이오 사업화 공고 => 높은 점수',
+    profile: profiles.healthcareAppPreliminary,
+    announcement: {
+      title: '바이오헬스 예비창업자 사업화 지원',
+      summary: '헬스케어 서비스 아이디어 검증 및 사업화 지원',
+      eligibility: ['예비창업자'],
+      category: ['바이오', '헬스케어', '사업화'],
+      tags: ['헬스', '운동', '웰니스'],
+    },
+    validate: (result) => {
+      if (result.score < 40) {
+        return { pass: false, reason: `점수 ${result.score} < 40 (도메인 일치인데 점수 낮음)` }
+      }
+      if (!result.breakdown.stageBoostApplied) {
+        return { pass: false, reason: `Stage Boost가 적용되지 않음` }
+      }
+      return { pass: true }
+    },
+  },
+  {
+    name: '[정탐] 헬스케어 앱 예비창업자 + 창업교육/멘토링 공고 => Stage Boost 적용',
+    profile: profiles.healthcareAppPreliminary,
+    announcement: {
+      title: '예비창업자 창업교육 및 멘토링',
+      summary: 'IT/디지털 서비스 예비창업자 대상 창업교육 및 멘토링 지원',
+      eligibility: ['예비창업자', '창업준비자'],
+      category: ['창업교육', '멘토링'],
+      tags: ['디지털', 'IT', '서비스'],
+    },
+    validate: (result) => {
+      // Stage Boost(12) + 기업형태(15) = 27점 (범용 교육 공고라서 도메인 매칭 낮음)
+      if (result.score < 25) {
+        return { pass: false, reason: `점수 ${result.score} < 25 (예비창업자 공고인데 점수 낮음)` }
+      }
+      if (!result.breakdown.stageBoostApplied) {
+        return { pass: false, reason: `Stage Boost가 적용되지 않음` }
+      }
+      return { pass: true }
+    },
+  },
+
+  // ========== 기존 테스트 케이스 (유지) ==========
+  {
+    name: '[기존] AI 스타트업 + 가죽패션 소공인 공고 => 점수 상한',
     profile: profiles.aiMusicStartup,
     announcement: {
       title: '가죽패션 소공인 장비 임대지원',
@@ -248,14 +391,14 @@ const testCases = [
       category: ['제조', '장비지원'],
     },
     validate: (result) => {
-      if (result.score > 49) {
-        return { pass: false, reason: `점수 ${result.score} > 49 (Relevance Gate 또는 Industry Penalty 미적용)` }
+      if (result.score > 20) {
+        return { pass: false, reason: `점수 ${result.score} > 20 (Industry Penalty 미적용)` }
       }
       return { pass: true }
     },
   },
   {
-    name: '가죽 제조업체 + 가죽패션 공고 => 높은 점수 (50 이상)',
+    name: '[기존] 가죽 제조업체 + 가죽패션 공고 => 높은 점수',
     profile: profiles.leatherManufacturer,
     announcement: {
       title: '가죽패션 소공인 장비 임대지원',
@@ -271,23 +414,7 @@ const testCases = [
     },
   },
   {
-    name: 'Relevance Gate: 핀테크 + 농업 공고 => 점수 상한',
-    profile: profiles.fintechStartup,
-    announcement: {
-      title: '농업 스마트팜 장비 지원',
-      summary: '스마트팜 설비 도입 지원사업',
-      eligibility: ['서울 소재 농업법인'],
-      category: ['농업', '스마트팜'],
-    },
-    validate: (result) => {
-      if (result.score > 49) {
-        return { pass: false, reason: `점수 ${result.score} > 49 (Relevance Gate 미적용)` }
-      }
-      return { pass: true }
-    },
-  },
-  {
-    name: 'Relevance Pass: AI 스타트업 + AI 지원사업 => 높은 점수',
+    name: '[기존] AI 스타트업 + AI 지원사업 => 높은 점수',
     profile: profiles.aiMusicStartup,
     announcement: {
       title: 'AI 스타트업 기술개발 지원',
@@ -304,7 +431,7 @@ const testCases = [
     },
   },
   {
-    name: '범용 공고 (R&D 바우처) => Industry Penalty 없음',
+    name: '[기존] 범용 공고 (R&D 바우처) => Industry Penalty 없음',
     profile: profiles.aiMusicStartup,
     announcement: {
       title: '중소기업 R&D 바우처 지원',
@@ -326,7 +453,7 @@ const testCases = [
 // ============================================================
 
 console.log('='.repeat(60))
-console.log('Relevance Gate & Industry Mismatch Penalty 테스트')
+console.log('Matching Score 테스트 (Relevance Gate, Industry Mismatch, Stage Boost)')
 console.log('='.repeat(60))
 
 let passed = 0
@@ -338,12 +465,13 @@ for (const tc of testCases) {
 
   if (validation.pass) {
     console.log(`✅ PASS: ${tc.name}`)
-    console.log(`   Score: ${result.score}, Breakdown: interest=${result.breakdown.interestScore.toFixed(1)}, keyword=${result.breakdown.keywordScore}, companyType=${result.breakdown.companyTypeScore}, region=${result.breakdown.regionScore}, industryPenalty=${result.breakdown.industryMismatchPenalty}, gateApplied=${result.breakdown.relevanceGateApplied}`)
+    console.log(`   Score: ${result.score}, interest=${result.breakdown.interestScore.toFixed(1)}, keyword=${result.breakdown.keywordScore}, companyType=${result.breakdown.companyTypeScore}, region=${result.breakdown.regionScore}, industryPenalty=${result.breakdown.industryMismatchPenalty}(${result.breakdown.industryMismatchType || 'none'}), stageBoost=${result.breakdown.stageBoost}(${result.breakdown.stageBoostApplied}), gateApplied=${result.breakdown.relevanceGateApplied}`)
     passed++
   } else {
     console.log(`❌ FAIL: ${tc.name}`)
     console.log(`   ${validation.reason}`)
-    console.log(`   Score: ${result.score}, Breakdown:`, JSON.stringify(result.breakdown, null, 2).split('\n').map(l => '   ' + l).join('\n'))
+    console.log(`   Score: ${result.score}`)
+    console.log(`   Breakdown:`, JSON.stringify(result.breakdown, null, 2).split('\n').map(l => '     ' + l).join('\n'))
     failed++
   }
 }

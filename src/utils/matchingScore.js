@@ -1837,43 +1837,76 @@ const RELEVANCE_GATE_CAP = 49
 
 /**
  * Industry Mismatch Penalty: 업종 불일치 시 감점
+ * - 강한 불일치(제조/시설/공간): -35점
+ * - 일반 불일치: -25점
  */
-const INDUSTRY_MISMATCH_PENALTY = -30
+const INDUSTRY_MISMATCH_PENALTY_STRONG = -35
+const INDUSTRY_MISMATCH_PENALTY_NORMAL = -25
+
+/**
+ * Stage Boost: 예비창업자 + 초기검증 키워드 가점
+ */
+const STAGE_BOOST_PRELIMINARY = 12
 
 /**
  * 업종 특화 키워드 그룹 (공고에서 탐지)
  * - 해당 키워드가 공고에 있고, 프로필에 관련 interests가 없으면 패널티 적용
+ * - penaltyLevel: 'strong' | 'normal' - 패널티 강도
  */
 const INDUSTRY_SPECIFIC_KEYWORDS = {
-  // 전통 제조/공방 업종
+  // 전통 제조/공방 업종 (강한 패널티)
   traditionalManufacturing: {
     keywords: ['가죽', '피혁', '봉제', '원단', '섬유', '직물', '의류', '패션', '신발', '가방', '액세서리', '잡화',
-               '공방', '수공예', '공예품', '도자기', '목공', '가구', '인테리어', '소공인', '제조장비', '금형',
+               '공방', '수공예', '공예품', '도자기', '목공', '가구', '소공인', '제조장비', '금형',
                '주물', '주조', '단조', '도금', '절삭', '용접', '판금', '프레스', '열처리'],
-    allowedInterests: ['manufacturing', 'fashion', 'smartfactory'], // 이 interests가 있으면 패널티 면제
+    allowedInterests: ['manufacturing', 'fashion', 'smartfactory'],
+    penaltyLevel: 'strong',
+  },
+  // 시설/공간/입주 (강한 패널티 - 디지털 서비스와 명확히 불일치)
+  facilitySpace: {
+    keywords: ['입주', '입주공간', '공유오피스', '창업공간', '창작공간', '제조공간', '공장', '작업장', '작업실',
+               '시설', '설비', '장비임대', '장비지원', '장비대여', '기자재', '공간지원', '공간임대'],
+    allowedInterests: ['manufacturing', 'smartfactory'],
+    penaltyLevel: 'strong',
   },
   // 식품/요식업
   food: {
     keywords: ['식품', '요식업', '외식업', '음식점', '식당', '베이커리', '제과', '제빵', '정육', '수산', '농수산',
                '반찬', '도시락', '케이터링', '프랜차이즈', '가맹점'],
-    allowedInterests: ['foodtech', 'bio'], // foodtech는 바이오/헬스와 연관 가능
+    allowedInterests: ['foodtech', 'bio'],
+    penaltyLevel: 'normal',
   },
-  // 건설/건축
+  // 건설/건축 (강한 패널티)
   construction: {
-    keywords: ['건설', '건축', '시공', '토목', '인테리어', '리모델링', '설비', '배관', '전기공사', '소방', '조경'],
+    keywords: ['건설', '건축', '시공', '토목', '리모델링', '배관', '전기공사', '소방', '조경'],
     allowedInterests: ['manufacturing', 'smartfactory'],
+    penaltyLevel: 'strong',
   },
   // 농업/축산
   agriculture: {
     keywords: ['농업', '축산', '양계', '양돈', '낙농', '작물', '재배', '농기계', '비료', '사료', '종자'],
     allowedInterests: ['foodtech', 'bio', 'smartfarm'],
+    penaltyLevel: 'normal',
   },
   // 미용/뷰티 (오프라인)
   beauty: {
-    keywords: ['미용실', '헤어', '네일', '피부관리', '에스테틱', '뷰티샵', '화장품', '코스메틱'],
+    keywords: ['미용실', '헤어샵', '네일샵', '피부관리실', '에스테틱', '뷰티샵'],
     allowedInterests: ['fashion', 'bio', 'healthcare'],
+    penaltyLevel: 'normal',
   },
 }
+
+/**
+ * 예비창업자 Stage Boost 키워드
+ * - 공고에 이 키워드가 있고 프로필이 예비창업자면 가점
+ */
+const PRELIMINARY_STAGE_KEYWORDS = [
+  '예비창업', '예비 창업', '예비창업자', '창업준비', '창업 준비',
+  '아이디어', '아이디어 검증', 'poc', '초기검증', '초기 검증',
+  '사업화', '사업화 지원', '시제품', '프로토타입', 'mvp',
+  '창업교육', '창업 교육', '멘토링', '액셀러레이팅',
+  '데모데이', '데모 데이', 'ir', '투자유치',
+]
 
 /**
  * 프로필 텍스트에서 업종 신호가 있는지 확인
@@ -1930,6 +1963,9 @@ export function calculateMatchingScore(profile, announcement) {
     exclusionPenalty: 0,
     relevanceGateApplied: false,
     industryMismatchPenalty: 0,
+    industryMismatchType: null, // 'strong' | 'normal' | null
+    stageBoost: 0,
+    stageBoostApplied: false,
   }
 
   // 통합 검색 텍스트 생성 (공고의 모든 텍스트)
@@ -2163,10 +2199,12 @@ export function calculateMatchingScore(profile, announcement) {
   }
 
   // ============================================================
-  // 7. [NEW] Industry Mismatch Penalty (업종 불일치 감점)
+  // 7. Industry Mismatch Soft Penalty (업종 불일치 감점)
   // - 공고에 업종 특화 키워드가 있고, 프로필에 해당 업종 신호가 없으면 패널티
+  // - penaltyLevel에 따라 강도 조절 (strong: -35, normal: -25)
   // ============================================================
   let industryMismatchDetected = false
+  let detectedPenaltyLevel = null
 
   for (const [industryType, config] of Object.entries(INDUSTRY_SPECIFIC_KEYWORDS)) {
     // 공고에 해당 업종 키워드가 있는지 확인
@@ -2184,18 +2222,45 @@ export function calculateMatchingScore(profile, announcement) {
       // 둘 다 없으면 mismatch
       if (!hasAllowedInt && !hasSignalInProfile) {
         industryMismatchDetected = true
-        break // 하나라도 mismatch면 패널티 적용
+        // 가장 강한 패널티 레벨 유지
+        if (config.penaltyLevel === 'strong') {
+          detectedPenaltyLevel = 'strong'
+        } else if (detectedPenaltyLevel !== 'strong') {
+          detectedPenaltyLevel = 'normal'
+        }
+        // 강한 패널티면 바로 break, 아니면 다른 강한 패널티 찾기 계속
+        if (detectedPenaltyLevel === 'strong') break
       }
     }
   }
 
   if (industryMismatchDetected) {
-    breakdown.industryMismatchPenalty = INDUSTRY_MISMATCH_PENALTY
-    score += INDUSTRY_MISMATCH_PENALTY
+    const penalty = detectedPenaltyLevel === 'strong'
+      ? INDUSTRY_MISMATCH_PENALTY_STRONG
+      : INDUSTRY_MISMATCH_PENALTY_NORMAL
+    breakdown.industryMismatchPenalty = penalty
+    breakdown.industryMismatchType = detectedPenaltyLevel
+    score += penalty
   }
 
   // ============================================================
-  // 8. [NEW] Relevance Gate (도메인 적합도 최소 기준)
+  // 8. Stage Boost (예비창업자 단계 가점)
+  // - 예비창업자 프로필 + 초기검증/사업화 키워드 공고 → 가점
+  // ============================================================
+  if (profile.businessAge === 'preliminary' || profile.companyType === 'preliminary') {
+    const hasStageKeyword = PRELIMINARY_STAGE_KEYWORDS.some(kw =>
+      fullSearchText.includes(kw.toLowerCase())
+    )
+
+    if (hasStageKeyword) {
+      breakdown.stageBoost = STAGE_BOOST_PRELIMINARY
+      breakdown.stageBoostApplied = true
+      score += STAGE_BOOST_PRELIMINARY
+    }
+  }
+
+  // ============================================================
+  // 9. Relevance Gate (도메인 적합도 최소 기준)
   // - 관심분야 + 키워드 매칭 점수가 THRESHOLD 미만이면 점수 상한 적용
   // - 지역/기업형태만 일치해도 상위 노출되는 것을 방지
   // ============================================================
