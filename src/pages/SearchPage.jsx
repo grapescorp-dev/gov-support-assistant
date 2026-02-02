@@ -1,16 +1,17 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useSearchStore } from '../stores/useSearchStore'
-import { useProfileStore } from '../stores/useProfileStore'
+import { useProfileStore, INTERESTS } from '../stores/useProfileStore'
 import { useDocumentStore } from '../stores/useDocumentStore'
 import { searchAnnouncements, analyzeProgram, summarizeProgramFromDoc } from '../api/announcements'
 import { calculateMatchingScore, extractRegionRestriction, getRegionName } from '../utils/matchingScore'
 import { getAnnouncementLink } from '../utils/getAnnouncementLink'
 import { stripHtml } from '../utils/stripHtml'
 import { CollapsibleTags } from '../components/CollapsibleTags'
-import { Search, Loader2, ExternalLink, Sparkles, Filter, Calendar, Building2, Tag, ArrowUpDown, UserCircle, TrendingUp, MapPin, AlertTriangle, Briefcase, CalendarDays, Info, FileText, AlertCircle, CheckCircle2, X } from 'lucide-react'
+import { Search, Loader2, ExternalLink, Sparkles, Filter, Calendar, Building2, Tag, ArrowUpDown, UserCircle, TrendingUp, MapPin, AlertTriangle, Briefcase, CalendarDays, Info, FileText, AlertCircle, CheckCircle2, X, ChevronDown } from 'lucide-react'
 
-const categories = ['전체', 'AI', '음악', 'ICT', 'IT', 'CT', '콘텐츠', '창업']
+// 관심분야 카테고리 (INTERESTS에서 가져옴 - 프로필과 동일)
+const categories = ['전체', ...INTERESTS.map(i => i.value)]
 
 // 맞춤 공고 필터링 기준 점수
 const MATCHING_THRESHOLD = 30
@@ -160,16 +161,22 @@ export function SearchPage() {
       withMatchingScore = withMatchingScore.filter((p) => p.source === selectedSource)
     }
 
-    // 카테고리 필터링 (클라이언트 측에서 추가 필터링)
+    // 카테고리 필터링 (INTERESTS의 keywords 활용)
     if (selectedCategory !== '전체') {
+      const selectedInterest = INTERESTS.find(i => i.value === selectedCategory)
+      const searchKeywords = selectedInterest?.keywords || [selectedCategory.toLowerCase()]
+
       withMatchingScore = withMatchingScore.filter((p) => {
-        const categories = p.category || []
-        // 정확한 매칭 또는 부분 매칭 (예: 'CT'는 'CT', '콘텐츠'와 매칭)
-        return categories.some((cat) => {
-          const catLower = cat.toLowerCase()
-          const selectedLower = selectedCategory.toLowerCase()
-          return catLower === selectedLower || catLower.includes(selectedLower)
-        })
+        // 공고의 모든 텍스트를 검색 대상으로
+        const searchText = [
+          p.title || '',
+          p.summary || '',
+          ...(p.category || []),
+          ...(p.tags || []),
+        ].join(' ').toLowerCase()
+
+        // 키워드 중 하나라도 매칭되면 표시
+        return searchKeywords.some(keyword => searchText.includes(keyword))
       })
     }
 
@@ -521,25 +528,68 @@ export function SearchPage() {
         ))}
       </div>
 
-      {/* 카테고리 필터 + 정렬 */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-2 flex-wrap">
-          <Filter size={16} className="text-gray-500" />
-          {categories.map((cat) => (
+      {/* 관심분야/카테고리 필터 (그룹별) */}
+      <div className="bg-gray-50 p-3 rounded-lg border border-gray-200">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <Filter size={14} className="text-gray-500" />
+            <span className="text-sm font-medium text-gray-700">관심분야 필터</span>
+            {selectedCategory !== '전체' && (
+              <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">
+                {INTERESTS.find(i => i.value === selectedCategory)?.label || selectedCategory}
+              </span>
+            )}
+          </div>
+          {selectedCategory !== '전체' && (
             <button
-              key={cat}
-              onClick={() => handleCategoryChange(cat)}
-              className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                selectedCategory === cat
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
+              onClick={() => handleCategoryChange('전체')}
+              className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
             >
-              {cat}
+              <X size={12} />
+              초기화
             </button>
-          ))}
+          )}
         </div>
 
+        {/* 전체 버튼 */}
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          <button
+            onClick={() => handleCategoryChange('전체')}
+            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+              selectedCategory === '전체'
+                ? 'bg-blue-600 text-white'
+                : 'bg-white text-gray-600 border border-gray-300 hover:border-blue-400'
+            }`}
+          >
+            전체
+          </button>
+        </div>
+
+        {/* 그룹별 카테고리 */}
+        <div className="space-y-2">
+          {['기술', '산업', '지원유형'].map(group => (
+            <div key={group} className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs text-gray-400 w-14 flex-shrink-0">{group}</span>
+              {INTERESTS.filter(i => i.group === group).map(interest => (
+                <button
+                  key={interest.value}
+                  onClick={() => handleCategoryChange(interest.value)}
+                  className={`px-2 py-1 rounded-full text-xs font-medium transition-colors ${
+                    selectedCategory === interest.value
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-white text-gray-600 border border-gray-300 hover:border-blue-400 hover:text-blue-600'
+                  }`}
+                >
+                  {interest.label}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* 정렬 옵션 + 마감 공고 필터 */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         {/* 정렬 옵션 + 마감 공고 필터 */}
         <div className="flex items-center gap-4">
           <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-600">

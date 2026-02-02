@@ -1,5 +1,7 @@
 // 프로필 기반 지원사업 매칭률 계산
 
+import { INTERESTS } from '../stores/useProfileStore'
+
 // 전체 지역 매핑 (프로필 region 값 -> 키워드 배열)
 // 시·도 + 주요 시·군 단위까지 포함
 const REGION_KEYWORDS = {
@@ -562,11 +564,17 @@ export function calculateMatchingScore(profile, announcement) {
   // ============================================================
 
   // 1-1. 관심분야(interests) 매칭 (최대 20점)
+  // INTERESTS의 keywords를 활용하여 확장 매칭
   if (profile.interests && profile.interests.length > 0) {
     let interestMatchCount = 0
-    profile.interests.forEach(interest => {
-      const interestLower = interest.toLowerCase()
-      if (fullSearchText.includes(interestLower)) {
+    profile.interests.forEach(interestValue => {
+      // INTERESTS에서 해당 관심분야의 keywords 가져오기
+      const interestConfig = INTERESTS.find(i => i.value === interestValue)
+      const keywords = interestConfig?.keywords || [interestValue.toLowerCase()]
+
+      // keywords 중 하나라도 공고에 포함되면 매칭
+      const isMatched = keywords.some(keyword => fullSearchText.includes(keyword.toLowerCase()))
+      if (isMatched) {
         interestMatchCount++
       }
     })
