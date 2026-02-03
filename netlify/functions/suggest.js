@@ -19,7 +19,7 @@ export async function handler(event) {
   }
 
   try {
-    const { section, programTitle, userProfile, currentContent } = JSON.parse(event.body)
+    const { section, userProfile } = JSON.parse(event.body)
 
     // 섹션별 제안 템플릿
     const suggestions = {

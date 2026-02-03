@@ -18,9 +18,6 @@ import {
 } from '../constants/microcopy'
 import { Search, Loader2, ExternalLink, Sparkles, Filter, Calendar, Building2, Tag, ArrowUpDown, UserCircle, TrendingUp, MapPin, AlertTriangle, Briefcase, CalendarDays, Info, FileText, AlertCircle, CheckCircle2, X, ChevronDown, Settings, Star, Clock, Eye, HelpCircle } from 'lucide-react'
 
-// 관심분야 카테고리 (INTERESTS에서 가져옴 - 프로필과 동일)
-const categories = ['전체', ...INTERESTS.map(i => i.value)]
-
 // 맞춤 공고 필터링 기준 점수
 const MATCHING_THRESHOLD = 30
 
@@ -68,7 +65,8 @@ export function SearchPage() {
   const [selectedCategory, setSelectedCategory] = useState('전체')
   const [sortBy, setSortBy] = useState('deadline') // 'deadline' | 'matching'
   const [showExpired, setShowExpired] = useState(false) // 마감된 공고 표시 여부
-  const [showOnlyMatched, setShowOnlyMatched] = useState(false) // 맞춤 공고만 표시 여부
+  // eslint-disable-next-line no-unused-vars
+  const [showOnlyMatched, setShowOnlyMatched] = useState(false) // 맞춤 공고만 표시 여부 (향후 UI 추가 예정)
   const [aiAnalysis, setAiAnalysis] = useState(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
 
@@ -119,7 +117,11 @@ export function SearchPage() {
       // 자격 검증 수행 (프로필이 있을 때만)
       const eligibilityResult = activeProfile
         ? checkEligibility(activeProfile, program)
-        : { eligible: true, excludedReason: null }
+        : { eligible: true, excludedReason: null, hardFilterResult: null }
+
+      // hardFilterResult에서 hardPass 추출 (v2)
+      const hardFilterResult = eligibilityResult.hardFilterResult
+      const hardPass = hardFilterResult?.hardPass // true, false, or null (unknown)
 
       return {
         ...program,
@@ -129,6 +131,9 @@ export function SearchPage() {
         isRegionMismatch,
         eligible: eligibilityResult.eligible,
         excludedReason: eligibilityResult.excludedReason,
+        // Hard Filter v2 필드
+        hardPass,
+        hardFilterResult,
       }
     })
 
@@ -213,6 +218,7 @@ export function SearchPage() {
     if (results.length === 0) {
       handleSearch(null, true)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const handleSearch = async (e, initial = false) => {
@@ -277,7 +283,7 @@ export function SearchPage() {
     try {
       const analysis = await analyzeProgram(program, activeProfile)
       setAiAnalysis(analysis)
-    } catch (error) {
+    } catch {
       // 개발 환경용 기본 분석
       setAiAnalysis({
         summary: `${program.title}은(는) ${program.summary}`,
@@ -954,6 +960,14 @@ export function SearchPage() {
                             </div>
                           )}
 
+                          {/* [Hard Filter v2] Unknown 상태 표시 - 지원자격 확인 필요 */}
+                          {program.hardPass === null && (
+                            <div className="flex items-center gap-1.5 mb-3 px-2 py-1 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
+                              <AlertCircle size={12} />
+                              <span>지원자격 확인 필요</span>
+                            </div>
+                          )}
+
                           {/* [마이크로카피] "왜 추천됐나요?" 토글 */}
                           <div className="mt-2">
                             <button
@@ -1130,6 +1144,14 @@ export function SearchPage() {
                           <span>
                             {getRegionName(program.regionRestriction.region, program.regionRestriction.detectedCity)} 지역 관련
                           </span>
+                        </div>
+                      )}
+
+                      {/* [Hard Filter v2] Unknown 상태 표시 - 지원자격 확인 필요 */}
+                      {program.hardPass === null && (
+                        <div className="flex items-center gap-1.5 mt-2 px-2 py-1 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
+                          <AlertCircle size={12} />
+                          <span>지원자격 확인 필요</span>
                         </div>
                       )}
                     </div>

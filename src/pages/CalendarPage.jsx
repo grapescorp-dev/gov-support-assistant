@@ -92,6 +92,7 @@ export function CalendarPage() {
       }
     }
     fetchData()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // 다크모드 토글

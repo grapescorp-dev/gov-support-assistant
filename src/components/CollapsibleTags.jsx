@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 
 // 태그 색상 매핑
 const TAG_COLORS = {
@@ -78,28 +78,26 @@ export function CollapsibleTags({ tags, maxLines = 2, className = '' }) {
   const [visibleCount, setVisibleCount] = useState(tags?.length || 0)
   const [measured, setMeasured] = useState(false)
 
-  // 태그 정렬
-  const sortedTags = tags ? sortTags(tags) : []
+  // 태그 정렬 (useMemo로 안정화)
+  const sortedTags = useMemo(() => tags ? sortTags(tags) : [], [tags])
+  const sortedTagsLength = sortedTags.length
 
   // 줄 수 측정 및 접기 여부 결정
   const measureAndCollapse = useCallback(() => {
-    if (!containerRef.current || sortedTags.length === 0) return
+    if (!containerRef.current || sortedTagsLength === 0) return
 
     const container = containerRef.current
     const lineHeight = 28 // 태그 높이 + gap 예상값
-    const maxHeight = lineHeight * maxLines + 4 // 여유값
+    const maxHeightValue = lineHeight * maxLines + 4 // 여유값
 
     // 모든 태그를 보여준 상태에서 높이 측정
     const actualHeight = container.scrollHeight
 
-    if (actualHeight > maxHeight) {
+    if (actualHeight > maxHeightValue) {
       // 접기 모드 필요
-      setIsCollapsed(true)
-
       // 보여줄 태그 개수 결정 (이진 탐색으로 최적화 가능하지만 간단히 순차 탐색)
       const children = container.children
       let count = 0
-      let accHeight = 0
 
       for (let i = 0; i < children.length; i++) {
         const child = children[i]
@@ -107,23 +105,28 @@ export function CollapsibleTags({ tags, maxLines = 2, className = '' }) {
         const containerRect = container.getBoundingClientRect()
         const relativeTop = rect.top - containerRect.top
 
-        if (relativeTop + rect.height > maxHeight - lineHeight) {
+        if (relativeTop + rect.height > maxHeightValue - lineHeight) {
           break
         }
         count++
       }
 
       // 최소 2개, 최대 전체-1개
-      setVisibleCount(Math.max(2, Math.min(count - 1, sortedTags.length - 1)))
+      const newVisibleCount = Math.max(2, Math.min(count - 1, sortedTagsLength - 1))
+      setIsCollapsed(true)
+      setVisibleCount(newVisibleCount)
     } else {
       setIsCollapsed(false)
-      setVisibleCount(sortedTags.length)
+      setVisibleCount(sortedTagsLength)
     }
     setMeasured(true)
-  }, [sortedTags, maxLines])
+  }, [sortedTagsLength, maxLines])
 
   useEffect(() => {
-    measureAndCollapse()
+    // 초기 측정을 requestAnimationFrame으로 지연
+    const rafId = requestAnimationFrame(() => {
+      measureAndCollapse()
+    })
 
     const handleResize = () => {
       setMeasured(false)
@@ -131,7 +134,10 @@ export function CollapsibleTags({ tags, maxLines = 2, className = '' }) {
     }
 
     window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
+    return () => {
+      cancelAnimationFrame(rafId)
+      window.removeEventListener('resize', handleResize)
+    }
   }, [measureAndCollapse])
 
   if (!sortedTags || sortedTags.length === 0) return null
@@ -167,4 +173,5 @@ export function CollapsibleTags({ tags, maxLines = 2, className = '' }) {
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export { TAG_COLORS, getTagColor, sortTags }

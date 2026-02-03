@@ -160,19 +160,10 @@ function matchAnyWithSynonyms(text, keywords) {
 function extractRevenueCondition(text) {
   if (!text) return null
 
-  const patterns = [
-    // "매출 10억 이상", "매출액 50억 미만"
-    /매출[액]?\s*(\d+(?:\.\d+)?)\s*억\s*(이상|이하|미만|초과)?/g,
-    // "연매출 10억~50억", "매출 10~50억"
-    /매출[액]?\s*(\d+(?:\.\d+)?)\s*[~\-]\s*(\d+(?:\.\d+)?)\s*억/g,
-    // "매출 10억 원 이상"
-    /매출[액]?\s*(\d+(?:\.\d+)?)\s*억\s*원?\s*(이상|이하|미만|초과)?/g,
-  ]
-
   let result = null
 
   // 범위 패턴 먼저 확인
-  const rangeMatch = text.match(/매출[액]?\s*(\d+(?:\.\d+)?)\s*[~\-]\s*(\d+(?:\.\d+)?)\s*억/)
+  const rangeMatch = text.match(/매출[액]?\s*(\d+(?:\.\d+)?)\s*[~-]\s*(\d+(?:\.\d+)?)\s*억/)
   if (rangeMatch) {
     return {
       min: parseFloat(rangeMatch[1]),
@@ -206,7 +197,7 @@ function extractEmployeeCondition(text) {
   if (!text) return null
 
   // 범위 패턴
-  const rangeMatch = text.match(/(상시근로자|종업원|직원|인원)\s*(\d+)\s*[~\-]\s*(\d+)\s*[명인]/)
+  const rangeMatch = text.match(/(상시근로자|종업원|직원|인원)\s*(\d+)\s*[~-]\s*(\d+)\s*[명인]/)
   if (rangeMatch) {
     return {
       min: parseInt(rangeMatch[2]),
@@ -685,6 +676,23 @@ const EXCLUSION_CODES = {
 }
 
 /**
+ * Hard Filter 표준화된 라벨 (v2)
+ * - 새로운 반환 구조에서 사용
+ * - hardFailReasons/hardUnknownReasons에 포함
+ */
+export const HARD_FILTER_LABELS = {
+  REGION_MISMATCH: 'REGION_MISMATCH',           // 지역 불일치
+  TARGET_MISMATCH: 'TARGET_MISMATCH',           // 기업형태/업력 불일치
+  COMPANY_SIZE_MISMATCH: 'COMPANY_SIZE_MISMATCH', // 기업규모 불일치
+  INDUSTRY_MISMATCH: 'INDUSTRY_MISMATCH',       // 업종 불일치
+  DUPLICATE_BENEFIT_RESTRICTION: 'DUPLICATE_BENEFIT_RESTRICTION', // 중복수혜 제한
+  DEADLINE_PASSED: 'DEADLINE_PASSED',           // 마감일 경과
+  MISSING_ELIGIBILITY_TEXT: 'MISSING_ELIGIBILITY_TEXT', // 지원자격 텍스트 없음
+  EXTRACTION_LOW_CONFIDENCE: 'EXTRACTION_LOW_CONFIDENCE', // 추출 신뢰도 낮음
+  MISSING_DATA: 'MISSING_DATA',                 // 프로필/공고 데이터 없음
+}
+
+/**
  * 텍스트에 allowPhrase가 포함되어 있는지 확인
  * @param {string} text - 검사할 텍스트
  * @returns {boolean}
@@ -714,11 +722,12 @@ function hasAllowPhraseNearPattern(text, pattern, contextSize = 40) {
 }
 
 /**
- * source별 기본 confidence 결정
+ * source별 기본 confidence 결정 (향후 확장용)
  * @param {string} source - 공고 소스 (mss_api, bizinfo, kstartup 등)
  * @param {string} ruleType - 규칙 타입 (companyType, age, region, exclusion, mandatory)
  * @returns {string} confidence level
  */
+// eslint-disable-next-line no-unused-vars
 function getBaseConfidenceBySource(source, ruleType) {
   // mss_api는 parsed 필드가 풍부하므로 기본 high
   if (source === 'mss_api') {
@@ -1137,7 +1146,8 @@ function extractBusinessAgeRequirementsWithConfidence(fullText, titleSummary, pa
 /**
  * 지역 요건 추출 (confidence 포함)
  */
-function extractRegionRequirementsWithConfidence(announcement, source) {
+// eslint-disable-next-line no-unused-vars
+function extractRegionRequirementsWithConfidence(announcement, _source) {
   const regionRestriction = extractRegionRestriction(announcement)
 
   let confidence = CONFIDENCE.LOW
@@ -1494,10 +1504,11 @@ export function evaluateEligibility(profile, requirements) {
 }
 
 /**
- * 공고의 기업형태 요구사항 추출 (기존 호환용 - 내부에서만 사용)
+ * 공고의 기업형태 요구사항 추출 (향후 확장용)
  * @param {string} text - 공고 전체 텍스트
  * @returns {Object} { required: string[], excluded: string[] }
  */
+// eslint-disable-next-line no-unused-vars
 function extractCompanyTypeRequirements(text) {
   const required = []
   const excluded = []
@@ -1583,10 +1594,11 @@ function extractCompanyTypeRequirements(text) {
 }
 
 /**
- * 공고의 업력(사업단계) 요구사항 추출 (강화된 패턴 매칭)
+ * 공고의 업력(사업단계) 요구사항 추출 (향후 확장용)
  * @param {string} text - 공고 전체 텍스트
  * @returns {Object} { minYears?: number, maxYears?: number, stage?: string, preliminaryOnly?: boolean, establishedOnly?: boolean }
  */
+// eslint-disable-next-line no-unused-vars
 function extractBusinessAgeRequirements(text) {
   const requirements = {}
 
@@ -1691,11 +1703,12 @@ function parseBusinessAgeYears(businessAge) {
 }
 
 /**
- * 명시적 제외 조건 추출 (exclusionText 전용)
+ * 명시적 제외 조건 추출 (향후 확장용)
  * @param {string} text - parsed.exclusionText
  * @param {Object} profile - 사용자 프로필
  * @returns {Object|null} { code: string, message: string } 또는 null
  */
+// eslint-disable-next-line no-unused-vars
 function checkExplicitExclusions(text, profile) {
   if (!text) return null
 
@@ -1742,12 +1755,13 @@ function checkExplicitExclusions(text, profile) {
 }
 
 /**
- * 필수 인증/요건 확인 (mandatoryText 전용)
+ * 필수 인증/요건 확인 (향후 확장용)
  * @param {string} mandatoryText - parsed.mandatoryText
  * @param {string} exclusionText - parsed.exclusionText (인증 필수 조건도 확인)
  * @param {Object} profile - 사용자 프로필
  * @returns {Object|null} { code: string, message: string } 또는 null
  */
+// eslint-disable-next-line no-unused-vars
 function checkMandatoryRequirements(mandatoryText, exclusionText, profile) {
   const combinedText = [mandatoryText || '', exclusionText || ''].join(' ').toLowerCase()
   const certifications = profile.certifications || []
@@ -1805,54 +1819,387 @@ function checkMandatoryRequirements(mandatoryText, exclusionText, profile) {
   return null
 }
 
+// ==============================================
+// applyHardFilter: 새로운 Hard Filter 시스템 (v2)
+// ==============================================
+
+/**
+ * 마감일 상태 체크
+ * @param {Object} announcement - 공고 객체
+ * @returns {{ fail: boolean, daysRemaining: number | null }}
+ */
+function checkDeadlineStatus(announcement) {
+  if (!announcement.deadline) {
+    return { fail: false, daysRemaining: null }
+  }
+
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const deadlineDate = new Date(announcement.deadline)
+  deadlineDate.setHours(0, 0, 0, 0)
+  const diff = deadlineDate - today
+  const daysRemaining = Math.ceil(diff / (1000 * 60 * 60 * 24))
+
+  return {
+    fail: daysRemaining < 0,
+    daysRemaining,
+  }
+}
+
+/**
+ * 지역 자격 체크
+ * @param {Object} profile - 프로필
+ * @param {Object} regionReq - 지역 요건
+ * @returns {{ status: 'pass' | 'fail' | 'unknown', confidence: string, message?: string }}
+ */
+function checkRegionEligibilityForHardFilter(profile, regionReq) {
+  if (!regionReq || regionReq.type === 'nationwide' || regionReq.type === 'unknown') {
+    return { status: 'pass', confidence: CONFIDENCE.LOW }
+  }
+
+  if (regionReq.type === 'restricted' && profile.region) {
+    // 지역 제한이 있고 프로필에 지역 정보가 있는 경우
+    const profileRegion = profile.region
+    const allowedRegions = regionReq.regions || []
+
+    // 프로필 지역이 허용 목록에 없으면 불일치
+    if (allowedRegions.length > 0 && !allowedRegions.includes(profileRegion)) {
+      return {
+        status: 'fail',
+        confidence: regionReq.confidence || CONFIDENCE.HIGH,
+        message: `${regionReq.regionLabel || '해당 지역'} 소재 기업만 지원 가능`,
+      }
+    }
+  }
+
+  return { status: 'pass', confidence: CONFIDENCE.MEDIUM }
+}
+
+/**
+ * 기업형태 자격 체크
+ * @param {Object} profile - 프로필
+ * @param {Object} companyTypeReq - 기업형태 요건
+ * @returns {{ status: 'pass' | 'fail' | 'unknown', confidence: string, message?: string }}
+ */
+function checkCompanyTypeEligibilityForHardFilter(profile, companyTypeReq) {
+  if (!companyTypeReq || !profile.companyType) {
+    return { status: 'unknown', confidence: CONFIDENCE.LOW }
+  }
+
+  const { required, excluded, confidence } = companyTypeReq
+
+  // HIGH confidence인 경우만 제외 처리
+  if (confidence === CONFIDENCE.HIGH) {
+    // 제외 목록에 포함
+    if (excluded && excluded.includes(profile.companyType)) {
+      const typeLabel = COMPANY_TYPE_LABELS[profile.companyType] || profile.companyType
+      return {
+        status: 'fail',
+        confidence: CONFIDENCE.HIGH,
+        message: `${typeLabel} 지원 불가`,
+      }
+    }
+
+    // 필수 목록에 미포함 (법인만 가능 등)
+    if (required && required.length > 0 && !required.includes(profile.companyType)) {
+      // "법인만" 조건인데 개인사업자/예비창업자인 경우
+      if (required.includes('corporation') && ['sole', 'preliminary'].includes(profile.companyType)) {
+        return {
+          status: 'fail',
+          confidence: CONFIDENCE.HIGH,
+          message: '법인기업만 지원 가능',
+        }
+      }
+    }
+  }
+
+  return { status: 'pass', confidence: CONFIDENCE.MEDIUM }
+}
+
+/**
+ * 업력 자격 체크
+ * @param {Object} profile - 프로필
+ * @param {Object} ageReq - 업력 요건
+ * @returns {{ status: 'pass' | 'fail' | 'unknown', confidence: string, message?: string }}
+ */
+function checkBusinessAgeEligibilityForHardFilter(profile, ageReq) {
+  if (!ageReq || !profile.businessAge) {
+    return { status: 'unknown', confidence: CONFIDENCE.LOW }
+  }
+
+  // HIGH confidence인 경우만 제외 처리
+  if (ageReq.confidence === CONFIDENCE.HIGH) {
+    // 예비창업자 전용 공고인데 기창업자인 경우
+    if (ageReq.preliminaryOnly && profile.businessAge !== 'preliminary') {
+      return {
+        status: 'fail',
+        confidence: CONFIDENCE.HIGH,
+        message: '예비창업자 전용 공고',
+      }
+    }
+
+    // 기창업자 전용 공고인데 예비창업자인 경우
+    if (ageReq.establishedOnly && profile.businessAge === 'preliminary') {
+      return {
+        status: 'fail',
+        confidence: CONFIDENCE.HIGH,
+        message: '기창업자(사업자등록 완료) 전용 공고',
+      }
+    }
+
+    // 업력 제한 체크
+    if (ageReq.maxYears && profile.businessAge !== 'preliminary') {
+      const ageMap = {
+        'under1': 0.5,
+        '1to3': 2,
+        '3to5': 4,
+        '5to7': 6,
+        'over7': 10,
+      }
+      const profileYears = ageMap[profile.businessAge] || 0
+      if (profileYears > ageReq.maxYears) {
+        return {
+          status: 'fail',
+          confidence: CONFIDENCE.HIGH,
+          message: `업력 ${ageReq.maxYears}년 이하 기업만 지원 가능`,
+        }
+      }
+    }
+  }
+
+  return { status: 'pass', confidence: CONFIDENCE.MEDIUM }
+}
+
+/**
+ * 업종 불일치 체크 (강한 패널티 레벨만 제외)
+ * @param {Object} profile - 프로필
+ * @param {Object} announcement - 공고
+ * @returns {{ mismatch: boolean, penaltyLevel: 'strong' | 'normal' | null, message?: string }}
+ */
+function checkIndustryMismatchForHardFilter(profile, announcement) {
+  // 전통제조/시설공간 등 강한 불일치 키워드 체크
+  const fullText = [
+    announcement.title || '',
+    announcement.summary || '',
+    ...(announcement.tags || []),
+  ].join(' ').toLowerCase()
+
+  const profileInterests = profile.interests || []
+
+  // INDUSTRY_SPECIFIC_KEYWORDS는 기존 상수 활용 (2000번대 라인에 정의됨)
+  // 여기서는 간단한 강한 불일치 패턴만 체크
+  const strongMismatchKeywords = [
+    '가죽', '피혁', '봉제', '원단', '섬유', '직물',
+    '공방', '수공예', '도자기', '목공', '주물', '주조', '단조',
+    '입주공간', '창업공간', '제조공간', '공장임대', '장비지원',
+    '건설', '시공', '토목', '배관', '전기공사',
+  ]
+
+  const digitalInterests = ['ai', 'saas', 'ict', 'data', 'content', 'fintech', 'platform']
+  const isDigitalService = profileInterests.some(i => digitalInterests.includes(i)) ||
+    (profile.businessOverview || '').toLowerCase().match(/ai|saas|플랫폼|소프트웨어|앱|서비스/)
+
+  if (isDigitalService) {
+    const hasMismatchKeyword = strongMismatchKeywords.some(kw => fullText.includes(kw))
+    if (hasMismatchKeyword) {
+      return {
+        mismatch: true,
+        penaltyLevel: 'strong',
+        message: '업종 불일치 (전통제조/시설 공고)',
+      }
+    }
+  }
+
+  return { mismatch: false, penaltyLevel: null }
+}
+
+/**
+ * Hard Filter 적용 (v2 - 새로운 반환 구조)
+ *
+ * 차단 게이트로서의 역할:
+ * - hardPass: true → 통과, false → 제외, null → 미확인(기본 포함)
+ * - HIGH confidence 조건만 제외 트리거
+ * - Unknown(미확인)은 기본 포함하되 경고 표시
+ *
+ * @param {Object} profile - 사용자 프로필
+ * @param {Object} announcement - 지원사업 공고
+ * @param {Object} options - 옵션 (향후 확장용)
+ * @returns {{
+ *   hardPass: boolean | null,
+ *   hardFailReasons: Array<{ label: string, message: string, confidence: string, source?: string }>,
+ *   hardUnknownReasons: Array<{ label: string, message: string, reason: string }>,
+ *   hardConfidence: 'high' | 'medium' | 'low'
+ * }}
+ */
+export function applyHardFilter(profile, announcement, options = {}) {
+  const failReasons = []
+  const unknownReasons = []
+
+  // 1. 입력 검증
+  if (!profile || !announcement) {
+    return {
+      hardPass: null,
+      hardFailReasons: [],
+      hardUnknownReasons: [{
+        label: HARD_FILTER_LABELS.MISSING_DATA,
+        message: '프로필 또는 공고 데이터 없음',
+        reason: 'NO_INPUT_DATA',
+      }],
+      hardConfidence: CONFIDENCE.LOW,
+    }
+  }
+
+  const source = announcement.source || 'unknown'
+  const hasParsedData = !!(announcement.parsed?.eligibilityText)
+
+  // 2. 마감일 체크
+  const deadlineResult = checkDeadlineStatus(announcement)
+  if (deadlineResult.fail) {
+    failReasons.push({
+      label: HARD_FILTER_LABELS.DEADLINE_PASSED,
+      message: `마감일 경과 (D${deadlineResult.daysRemaining})`,
+      confidence: CONFIDENCE.HIGH,
+      source: 'deadline',
+    })
+  }
+
+  // 3. 요구사항 추출
+  const requirements = buildHardRequirements(announcement)
+
+  // 4. 데이터 가용성 체크 (bizinfo/kstartup은 parsed 없음)
+  if (!hasParsedData && ['bizinfo', 'kstartup'].includes(source)) {
+    unknownReasons.push({
+      label: HARD_FILTER_LABELS.MISSING_ELIGIBILITY_TEXT,
+      message: '지원자격 상세 정보 없음',
+      reason: 'NO_PARSED_DATA',
+    })
+  }
+
+  // 5. 지역 체크 (HIGH confidence만 제외)
+  const regionResult = checkRegionEligibilityForHardFilter(profile, requirements.region)
+  if (regionResult.status === 'fail' && regionResult.confidence === CONFIDENCE.HIGH) {
+    failReasons.push({
+      label: HARD_FILTER_LABELS.REGION_MISMATCH,
+      message: regionResult.message,
+      confidence: CONFIDENCE.HIGH,
+      source: 'region',
+    })
+  }
+
+  // 6. 기업형태 체크 (HIGH confidence만 제외)
+  const companyResult = checkCompanyTypeEligibilityForHardFilter(profile, requirements.companyType)
+  if (companyResult.status === 'fail' && companyResult.confidence === CONFIDENCE.HIGH) {
+    failReasons.push({
+      label: HARD_FILTER_LABELS.TARGET_MISMATCH,
+      message: companyResult.message,
+      confidence: CONFIDENCE.HIGH,
+      source: 'companyType',
+    })
+  }
+
+  // 7. 업력 체크 (HIGH confidence만 제외)
+  const ageResult = checkBusinessAgeEligibilityForHardFilter(profile, requirements.age)
+  if (ageResult.status === 'fail' && ageResult.confidence === CONFIDENCE.HIGH) {
+    failReasons.push({
+      label: HARD_FILTER_LABELS.TARGET_MISMATCH,
+      message: ageResult.message,
+      confidence: CONFIDENCE.HIGH,
+      source: 'businessAge',
+    })
+  }
+
+  // 8. 업종 불일치 체크 (strong penalty만 제외)
+  if (!options.skipIndustryCheck) {
+    const industryResult = checkIndustryMismatchForHardFilter(profile, announcement)
+    if (industryResult.mismatch && industryResult.penaltyLevel === 'strong') {
+      failReasons.push({
+        label: HARD_FILTER_LABELS.INDUSTRY_MISMATCH,
+        message: industryResult.message,
+        confidence: CONFIDENCE.MEDIUM, // industry는 medium으로 처리
+        source: 'industry',
+      })
+    }
+  }
+
+  // 9. 최종 결정 (Unknown은 기본 포함)
+  const highConfidenceFails = failReasons.filter(r => r.confidence === CONFIDENCE.HIGH)
+
+  if (highConfidenceFails.length > 0) {
+    // HIGH confidence 제외 사유 있음 → hardPass: false
+    return {
+      hardPass: false,
+      hardFailReasons: failReasons,
+      hardUnknownReasons: [],
+      hardConfidence: CONFIDENCE.HIGH,
+    }
+  } else if (unknownReasons.length > 0) {
+    // 미확인 사항 있음 → hardPass: null (기본 포함, 경고 표시)
+    return {
+      hardPass: null,
+      hardFailReasons: failReasons,
+      hardUnknownReasons: unknownReasons,
+      hardConfidence: CONFIDENCE.LOW,
+    }
+  } else {
+    // 통과
+    return {
+      hardPass: true,
+      hardFailReasons: [],
+      hardUnknownReasons: [],
+      hardConfidence: hasParsedData ? CONFIDENCE.HIGH : CONFIDENCE.MEDIUM,
+    }
+  }
+}
+
 /**
  * Hard Filter: 프로필이 공고의 자격 조건을 충족하는지 사전 검증
  *
- * [v2] Confidence 기반 시스템:
- * - HIGH confidence 조건만 제외 트리거
- * - MEDIUM/LOW는 로그만 남기고 통과
- * - source별 신뢰도 게이트 적용
- * - allowPhrase 감지 시 confidence 하향
+ * [v2] applyHardFilter를 내부적으로 호출하여 하위 호환성 유지
+ * - 기존 반환 형식: { isEligible, eligible, excludedReason, excludedReasons }
+ * - 새로운 applyHardFilter 결과를 기존 형식으로 변환
  *
  * @param {Object} profile - 사용자 프로필
  * @param {Object} announcement - 지원사업 공고
  * @returns {Object} { isEligible, eligible, excludedReason, excludedReasons }
  */
 export function checkEligibility(profile, announcement) {
-  // 기본 반환 형식 (기존 호환성 유지)
-  const createResult = (isEligible, code = null, message = null, excludedReasons = []) => ({
-    eligible: isEligible,
-    isEligible,
-    excludedReason: code ? { code, message } : null,
-    ...(code ? { excludedReasonText: message } : {}),
-    excludedReasons, // 디버깅용 전체 로그
-  })
+  // 새로운 Hard Filter 적용
+  const result = applyHardFilter(profile, announcement)
 
-  if (!profile || !announcement) {
-    return createResult(false, 'NO_DATA', '프로필 또는 공고 정보 없음')
+  // 기존 형식으로 변환
+  const allReasons = [...result.hardFailReasons, ...result.hardUnknownReasons]
+
+  // excludedReason: 첫 번째 실패 사유
+  const excludedReason = result.hardFailReasons[0]
+    ? { code: result.hardFailReasons[0].label, message: result.hardFailReasons[0].message }
+    : null
+
+  // excludedReasons: 모든 사유 (로그용)
+  const excludedReasons = allReasons.map(r => ({
+    code: r.label,
+    message: r.message,
+    confidence: r.confidence || CONFIDENCE.LOW,
+    priority: PRIORITY.P0, // 기본값
+  }))
+
+  return {
+    eligible: result.hardPass !== false, // null(unknown)은 eligible로 처리 (기본 포함)
+    isEligible: result.hardPass !== false,
+    excludedReason,
+    ...(excludedReason ? { excludedReasonText: excludedReason.message } : {}),
+    excludedReasons,
+    // 새로운 필드 (v2)
+    hardFilterResult: result,
   }
-
-  // 1. 공고에서 요건 추출 (confidence 포함)
-  const requirements = buildHardRequirements(announcement)
-
-  // 2. 프로필과 요건 비교 (confidence 기반 판정)
-  const evaluation = evaluateEligibility(profile, requirements)
-
-  // 3. 결과 반환 (기존 형식 유지)
-  return createResult(
-    evaluation.isEligible,
-    evaluation.excludedReason?.code || null,
-    evaluation.excludedReason?.message || null,
-    evaluation.excludedReasons || []
-  )
 }
 
 /**
- * 텍스트에서 키워드 매칭 점수 계산 (서비스 정보용)
+ * 텍스트에서 키워드 매칭 점수 계산 (향후 확장용)
  * @param {string} profileText - 프로필 텍스트 (businessOverview, targetMarket 등)
  * @param {string} announcementText - 공고 텍스트 (title, summary 등)
  * @returns {number} 매칭된 키워드 수
  */
+// eslint-disable-next-line no-unused-vars
 function calculateTextMatchScore(profileText, announcementText) {
   if (!profileText || !announcementText) return 0
 
@@ -1900,19 +2247,17 @@ const RELEVANCE_THRESHOLD = 12
 
 /**
  * Relevance Gate 미달 시 점수 상한
- * [v2.1] 29점으로 변경 - 추천 목록(30점 이상)에 포함되지 않도록 함
- * - 기존 49점은 추천 목록에 여전히 포함될 수 있었음
+ * - 추천 목록(30점 이상)에 포함되지 않도록 49점으로 제한
  */
-const RELEVANCE_GATE_CAP = 29
+const RELEVANCE_GATE_CAP = 49
 
 /**
  * Industry Mismatch Penalty: 업종 불일치 시 감점
- * [v2.1] 패널티 강화 - 관광/수산/지역특화 등 명확한 업종 불일치 방지
- * - 강한 불일치(제조/시설/관광/수산/지역특화): -40점
- * - 일반 불일치: -30점
+ * - 강한 불일치(제조/시설/공간): -35점
+ * - 일반 불일치: -25점
  */
-const INDUSTRY_MISMATCH_PENALTY_STRONG = -40
-const INDUSTRY_MISMATCH_PENALTY_NORMAL = -30
+const INDUSTRY_MISMATCH_PENALTY_STRONG = -35
+const INDUSTRY_MISMATCH_PENALTY_NORMAL = -25
 
 /**
  * Stage Boost: 예비창업자 + 초기검증 키워드 가점
@@ -1942,7 +2287,7 @@ const INDUSTRY_SPECIFIC_KEYWORDS = {
   },
   // 식품/요식업
   food: {
-    keywords: ['식품', '요식업', '외식업', '음식점', '식당', '베이커리', '제과', '제빵', '정육', '농수산',
+    keywords: ['식품', '요식업', '외식업', '음식점', '식당', '베이커리', '제과', '제빵', '정육', '수산', '농수산',
                '반찬', '도시락', '케이터링', '프랜차이즈', '가맹점'],
     allowedInterests: ['foodtech', 'bio'],
     penaltyLevel: 'normal',
@@ -1965,72 +2310,6 @@ const INDUSTRY_SPECIFIC_KEYWORDS = {
     allowedInterests: ['fashion', 'bio', 'healthcare'],
     penaltyLevel: 'normal',
   },
-  // [NEW] 관광/여행/숙박 (강한 패널티 - AI/ICT 서비스와 명확히 다른 업종)
-  tourismHospitality: {
-    keywords: ['관광', '여행', '여행사', '숙박', '호텔', '펜션', '게스트하우스', '리조트', '캠핑', '글램핑',
-               '민박', '모텔', '레저', '투어', '가이드', '관광지', '테마파크', '워터파크'],
-    allowedInterests: ['tourism', 'travel', 'leisure'],
-    penaltyLevel: 'strong',
-  },
-  // [NEW] 수산/해양 (강한 패널티)
-  fisheryMarine: {
-    keywords: ['수산', '어업', '양식', '수산물', '해양', '어선', '수협', '어촌', '해녀', '김', '미역', '전복',
-               '조개', '굴', '새우', '게', '낙지', '오징어', '멸치', '젓갈', '수산가공'],
-    allowedInterests: ['foodtech', 'bio', 'maritime'],
-    penaltyLevel: 'strong',
-  },
-  // [NEW] 지역특화산업/전통산업 (강한 패널티)
-  regionalTraditional: {
-    keywords: ['특산품', '향토', '전통주', '막걸리', '소주', '와인', '전통식품', '한식', '떡', '한과', '장류',
-               '고추장', '된장', '간장', '김치', '젓갈', '액젓', '장아찌', '지역산업', '향토산업',
-               '전통문화', '전통공예', '지역경제', '지역상생', '지역밀착'],
-    allowedInterests: ['foodtech', 'localBusiness'],
-    penaltyLevel: 'strong',
-  },
-  // [NEW] 소상공인/자영업 (일반 패널티)
-  smallBusiness: {
-    keywords: ['소상공인', '자영업', '골목상권', '상권', '점포', '매장운영', '소매', '도매', '유통업',
-               '편의점', '마트', '슈퍼', '세탁소', '빨래방', '문구점', '꽃집', '화원', '철물점',
-               '인테리어', '인테리어업', '창업점포'],
-    allowedInterests: ['retail', 'localBusiness'],
-    penaltyLevel: 'normal',
-  },
-  // [NEW] 운송/물류 오프라인 (일반 패널티)
-  logisticsOffline: {
-    keywords: ['화물', '운송업', '물류센터', '창고업', '택배', '퀵서비스', '용달', '이삿짐', '포워딩'],
-    allowedInterests: ['logistics', 'mobility'],
-    penaltyLevel: 'normal',
-  },
-  // [NEW] 사회적기업/협동조합 (일반 패널티 - 특수 형태)
-  socialEnterprise: {
-    keywords: ['사회적기업', '협동조합', '마을기업', '자활기업', '사회적경제', '취약계층', '장애인고용',
-               '노인일자리', '여성기업', '사회공헌'],
-    allowedInterests: ['socialImpact', 'nonprofit'],
-    penaltyLevel: 'normal',
-  },
-  // [NEW] 바이오/헬스케어 특화 (강한 패널티 - AI 키워드가 있어도 바이오 분야)
-  bioHealthcare: {
-    keywords: ['바이오', '헬스케어', '의료기기', '신약', '임상', '제약', '바이오텍', '생명공학', '유전자',
-               '세포', '줄기세포', '항체', '백신', '진단키트', '체외진단', '의약품', '건강기능식품',
-               '헬스케어 스타트업', '바이오 스타트업', '메디컬', '의료 AI'],
-    allowedInterests: ['bio', 'healthcare', 'medtech'],
-    penaltyLevel: 'strong',
-  },
-  // [NEW] 무역/수출 특화 (강한 패널티)
-  tradeExport: {
-    keywords: ['무역', '수출', '수입', '통관', '관세', '물류대행', '포워딩', '해외바이어', '바이어발굴',
-               '수출전문', '수출역량', '글로벌무역', '무역실무', '수출지원', '수출전사', '해외마케팅',
-               'FTA', '원산지', '무역금융'],
-    allowedInterests: ['trade', 'globalBusiness', 'export'],
-    penaltyLevel: 'strong',
-  },
-  // [NEW] 교육기관/운영사 모집 (강한 패널티 - 스타트업 대상 아님)
-  educationOperator: {
-    keywords: ['운영기관', '운영사 모집', '주관기관', '참여기관', '수행기관', '위탁기관', '교육기관',
-               '교육운영', '아카데미 운영', '프로그램 운영', '사업 운영기관', '컨소시엄 모집'],
-    allowedInterests: ['education', 'edutech', 'training'],
-    penaltyLevel: 'strong',
-  },
 }
 
 /**
@@ -2049,41 +2328,12 @@ const PRELIMINARY_STAGE_KEYWORDS = [
  * Industry Mismatch Penalty 완화 키워드
  * - 공고에 이 키워드가 명시적으로 포함되면 mismatch penalty를 완화
  * - AI/SW/디지털 서비스도 대상인 공고임을 나타냄
- * [v2.1] 완화 조건 강화: 단순히 "디지털전환"이라는 단어가 있어도
- *        명확히 업종 특화된 공고(관광, 수산, 지역특화 등)는 완화 제외
  */
 const PENALTY_MITIGATION_KEYWORDS = [
   'ai', '인공지능', '데이터', 'sw', '소프트웨어', '플랫폼', 'saas',
   '디지털', '디지털전환', 'ict', 'it', '콘텐츠', '앱', '어플',
   '온라인', '이커머스', '클라우드', '블록체인', '핀테크',
 ]
-
-/**
- * 완화 무효화 키워드 (Mitigation Blocker)
- * - 이 키워드들이 공고에 많이 포함되면 AI/디지털 키워드가 있어도 완화를 적용하지 않음
- * - 업종 특화 공고임을 강하게 나타내는 핵심 키워드
- */
-const MITIGATION_BLOCKER_KEYWORDS = [
-  // 관광/수산/농업 핵심 키워드 (이 키워드가 3개 이상 있으면 완화 무효)
-  '관광업', '숙박업', '수산업', '어업', '양식업', '농업', '축산업',
-  '지역특산', '향토', '전통산업', '지역상생', '골목상권',
-  // 명확한 오프라인 업종
-  '물류창고', '제조공장', '생산시설', '작업장', '장비지원',
-]
-
-/**
- * 공고가 업종 특화 공고인지 강하게 판단
- * - 블로커 키워드가 충분히 많으면 true
- */
-function shouldBlockMitigation(text) {
-  const lowerText = text.toLowerCase()
-  const blockerCount = MITIGATION_BLOCKER_KEYWORDS.filter(kw =>
-    lowerText.includes(kw.toLowerCase())
-  ).length
-
-  // 블로커 키워드가 2개 이상이면 완화 무효화
-  return blockerCount >= 2
-}
 
 /**
  * 도메인 키워드 그룹 (matchedDomains 추출용)
@@ -2470,15 +2720,12 @@ export function calculateMatchingScore(profile, announcement) {
       fullSearchText.includes(kw.toLowerCase())
     )
 
-    // [v2.1] 완화 무효화 체크: 업종 특화 키워드가 많으면 완화 적용 안 함
-    const mitigationBlocked = shouldBlockMitigation(fullSearchText)
-
     let penalty = detectedPenaltyLevel === 'strong'
       ? INDUSTRY_MISMATCH_PENALTY_STRONG
       : INDUSTRY_MISMATCH_PENALTY_NORMAL
 
-    // 완화 적용: 패널티를 절반으로 줄임 (단, 블로커가 없을 때만)
-    if (hasMitigationKeyword && !mitigationBlocked) {
+    // 완화 적용: 패널티를 절반으로 줄임
+    if (hasMitigationKeyword) {
       penalty = Math.round(penalty / 2)
       breakdown.penaltyMitigated = true
     }

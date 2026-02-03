@@ -1,7 +1,6 @@
 // API 호출 함수들
 
-// 로컬 개발 환경에서는 /api 사용 (vite proxy), 프로덕션에서는 /.netlify/functions 사용
-const API_BASE = import.meta.env.DEV ? '/api' : '/.netlify/functions'
+const API_BASE = '/.netlify/functions'
 
 // 실제 공고 데이터 가져오기 (기업마당 API)
 export async function fetchRealAnnouncements(options = {}) {
@@ -263,4 +262,145 @@ export async function parseMssDocs(announcement) {
       note: `ERROR: ${error.message}`,
     }
   }
+}
+
+// ==============================================
+// Hard Filter 캐시 (v2)
+// - 성공: 7일 캐시
+// - 실패 (negative cache): 6시간 캐시
+// ==============================================
+
+const HF_CACHE_KEY_PREFIX = 'hfCache:'
+const HF_CACHE_EXPIRY_DAYS_PASS = 7
+const HF_CACHE_EXPIRY_HOURS_FAIL = 6
+
+/**
+ * Hard Filter 캐시 키 생성
+ * - source, id, updatedAt 조합으로 고유 키 생성
+ * @param {Object} announcement - 공고 객체
+ * @returns {string} 캐시 키
+ */
+function getHardFilterCacheKey(announcement) {
+  const source = announcement.source || 'unknown'
+  const id = announcement.id
+  const updatedAt = announcement.updatedAt || announcement.fetchedAt || ''
+  return `${HF_CACHE_KEY_PREFIX}${source}:${id}:${updatedAt}`
+}
+
+/**
+ * localStorage 캐시에서 Hard Filter 결과 조회
+ * @param {Object} announcement - 공고 객체
+ * @returns {Object|null} 캐시된 결과 또는 null
+ */
+export function getHardFilterFromCache(announcement) {
+  try {
+    const key = getHardFilterCacheKey(announcement)
+    const cached = localStorage.getItem(key)
+
+    if (!cached) return null
+
+    const entry = JSON.parse(cached)
+    const now = Date.now()
+    const createdAt = new Date(entry.createdAt).getTime()
+
+    // 만료 확인 (실패는 6시간, 성공은 7일)
+    const isNegative = entry.negative === true
+    const expiryMs = isNegative
+      ? HF_CACHE_EXPIRY_HOURS_FAIL * 60 * 60 * 1000
+      : HF_CACHE_EXPIRY_DAYS_PASS * 24 * 60 * 60 * 1000
+
+    if (now - createdAt > expiryMs) {
+      localStorage.removeItem(key)
+      return null
+    }
+
+    return entry.data
+  } catch {
+    return null
+  }
+}
+
+/**
+ * localStorage 캐시에 Hard Filter 결과 저장
+ * @param {Object} announcement - 공고 객체
+ * @param {Object} result - applyHardFilter 결과
+ */
+export function setHardFilterToCache(announcement, result) {
+  try {
+    const key = getHardFilterCacheKey(announcement)
+    const isNegative = result.hardPass === false
+    const cacheEntry = {
+      createdAt: new Date().toISOString(),
+      negative: isNegative,
+      data: result,
+    }
+    localStorage.setItem(key, JSON.stringify(cacheEntry))
+  } catch {
+    // localStorage 용량 초과 등 무시
+    console.warn('[HardFilterCache] Failed to save cache')
+  }
+}
+
+/**
+ * Hard Filter 캐시 전체 삭제 (디버그용)
+ * @returns {number} 삭제된 항목 수
+ */
+export function clearHardFilterCache() {
+  let count = 0
+  try {
+    const keys = Object.keys(localStorage)
+    keys.forEach(key => {
+      if (key.startsWith(HF_CACHE_KEY_PREFIX)) {
+        localStorage.removeItem(key)
+        count++
+      }
+    })
+    console.log(`[HardFilterCache] Cleared ${count} entries`)
+  } catch {
+    console.warn('[HardFilterCache] Failed to clear cache')
+  }
+  return count
+}
+
+/**
+ * Hard Filter 캐시 통계 조회 (디버그용)
+ * @returns {Object} { total, pass, fail, unknown, expired }
+ */
+export function getHardFilterCacheStats() {
+  const stats = { total: 0, pass: 0, fail: 0, unknown: 0, expired: 0 }
+
+  try {
+    const keys = Object.keys(localStorage)
+    const now = Date.now()
+
+    keys.forEach(key => {
+      if (key.startsWith(HF_CACHE_KEY_PREFIX)) {
+        stats.total++
+        try {
+          const entry = JSON.parse(localStorage.getItem(key))
+          const createdAt = new Date(entry.createdAt).getTime()
+          const isNegative = entry.negative === true
+          const expiryMs = isNegative
+            ? HF_CACHE_EXPIRY_HOURS_FAIL * 60 * 60 * 1000
+            : HF_CACHE_EXPIRY_DAYS_PASS * 24 * 60 * 60 * 1000
+
+          if (now - createdAt > expiryMs) {
+            stats.expired++
+          } else if (entry.data?.hardPass === true) {
+            stats.pass++
+          } else if (entry.data?.hardPass === false) {
+            stats.fail++
+          } else {
+            stats.unknown++
+          }
+        } catch {
+          stats.expired++
+        }
+      }
+    })
+  } catch {
+    // ignore
+  }
+
+  return stats
 }

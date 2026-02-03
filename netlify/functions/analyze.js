@@ -78,12 +78,37 @@ export async function handler(event) {
   }
 
   try {
-    const { announcement, profile } = JSON.parse(event.body)
+    const { announcement, profile, hardFilterResult } = JSON.parse(event.body)
 
     // MSS 공고의 경우 parsed 정보 확보 시도
     let parsed = announcement.parsed
     if (!parsed && announcement.source === 'mss_api') {
       parsed = await fetchParsedFromMssDocs(announcement)
+    }
+
+    // Hard Filter 결과 텍스트화 (v2)
+    let hardFilterText = ''
+    if (hardFilterResult) {
+      const { hardPass, hardFailReasons, hardUnknownReasons, hardConfidence } = hardFilterResult
+
+      hardFilterText = `
+## Hard Filter 자동 검증 결과
+- 판정: ${hardPass === true ? '통과 (적격)' : hardPass === false ? '제외 (부적격)' : '미확인 (수동 검토 필요)'}
+- 신뢰도: ${hardConfidence || 'unknown'}
+`
+
+      if (hardFailReasons && hardFailReasons.length > 0) {
+        hardFilterText += `- 제외 사유:\n${hardFailReasons.map(r => `  * [${r.label}] ${r.message} (신뢰도: ${r.confidence})`).join('\n')}\n`
+      }
+
+      if (hardUnknownReasons && hardUnknownReasons.length > 0) {
+        hardFilterText += `- 미확인 사항:\n${hardUnknownReasons.map(r => `  * [${r.label}] ${r.message} (사유: ${r.reason})`).join('\n')}\n`
+      }
+
+      hardFilterText += `
+위 자동 검증 결과를 참고하되, 실제 공고 내용을 바탕으로 더 정확한 적합도 분석을 제공하세요.
+특히 "미확인" 상태인 경우, 공고 원문에서 지원자격 정보를 확인하여 분석에 반영하세요.
+`
     }
 
     // 프로필 정보 텍스트화
@@ -134,7 +159,7 @@ export async function handler(event) {
 ${announcementText}
 
 ${profileText}
-
+${hardFilterText}
 다음 JSON 형식으로 응답해주세요:
 {
   "summary": "공고 핵심 요약 (3-4문장으로 이 사업이 무엇인지, 누구에게 적합한지 설명)",

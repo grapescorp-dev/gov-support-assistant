@@ -35,6 +35,7 @@ export function HomePage() {
       </section>
 
       <section className="grid md:grid-cols-3 gap-6">
+        {/* eslint-disable-next-line no-unused-vars */}
         {features.map(({ to, icon: Icon, title, description }) => (
           <Link
             key={to}

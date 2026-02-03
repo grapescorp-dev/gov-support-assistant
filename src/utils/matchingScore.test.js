@@ -11,7 +11,7 @@
  * 7. Industry Mismatch Penalty (업종 불일치 감점)
  */
 
-import { checkEligibility, buildHardRequirements, evaluateEligibility, calculateMatchingScore } from './matchingScore.js'
+import { checkEligibility, buildHardRequirements, calculateMatchingScore, applyHardFilter, HARD_FILTER_LABELS } from './matchingScore.js'
 
 // 테스트용 프로필
 const profiles = {
@@ -589,15 +589,246 @@ function testRelevanceAndIndustryMismatch() {
   return { passed, failed, total: scoreTestCases.length }
 }
 
+// ========================================
+// applyHardFilter v2 테스트 케이스
+// ========================================
+const applyHardFilterTestCases = [
+  // 1. MSS 지역 제외 (FAIL)
+  {
+    name: 'MSS 지역 불일치: 부산 소재 공고 + 서울 프로필 => FAIL',
+    profile: {
+      companyType: 'sme',
+      businessAge: '1to3',
+      region: 'seoul',
+    },
+    announcement: {
+      id: 'test-1',
+      title: '부산시 스타트업 지원',
+      summary: '부산 소재 기업만 지원 가능',
+      source: 'mss_api',
+    },
+    expected: {
+      hardPass: false,
+      hasLabel: HARD_FILTER_LABELS.REGION_MISMATCH,
+    },
+  },
+
+  // 2. bizinfo 데이터 없음 (UNKNOWN → 기본 포함)
+  {
+    name: 'bizinfo 데이터 부족: parsed 없음 => UNKNOWN (기본 포함)',
+    profile: {
+      companyType: 'sme',
+      businessAge: '1to3',
+      region: 'seoul',
+    },
+    announcement: {
+      id: 'test-2',
+      title: 'AI 기업 지원사업',
+      summary: '중소기업 대상',
+      source: 'bizinfo',
+      // parsed 없음
+    },
+    expected: {
+      hardPass: null, // Unknown
+      hasUnknownLabel: HARD_FILTER_LABELS.MISSING_ELIGIBILITY_TEXT,
+    },
+  },
+
+  // 3. 개인사업자 제외 패턴 (FAIL)
+  {
+    name: '개인사업자 제외 패턴 => FAIL',
+    profile: {
+      companyType: 'sole',
+      businessAge: 'under1',
+      region: 'seoul',
+    },
+    announcement: {
+      id: 'test-3',
+      title: '법인기업 R&D 지원',
+      summary: '개인사업자 제외, 법인기업만 지원 가능',
+      source: 'bizinfo',
+    },
+    expected: {
+      hardPass: false,
+      hasLabel: HARD_FILTER_LABELS.TARGET_MISMATCH,
+    },
+  },
+
+  // 4. 우대 키워드 (PASS)
+  {
+    name: '우대 키워드: "법인 우대, 개인사업자도 지원 가능" => PASS',
+    profile: {
+      companyType: 'sole',
+      businessAge: '1to3',
+      region: 'seoul',
+    },
+    announcement: {
+      id: 'test-4',
+      title: '소상공인 지원사업',
+      summary: '법인 우대, 개인사업자도 지원 가능',
+      source: 'bizinfo',
+    },
+    expected: {
+      hardPass: null, // bizinfo는 parsed 없으면 Unknown
+      notHardFail: true, // hardPass !== false
+    },
+  },
+
+  // 5. 강한 업종 불일치 (현재는 medium confidence이므로 FAIL이 아님)
+  {
+    name: '업종 불일치 (가죽/피혁 공고 + AI 프로필) => PASS (medium confidence)',
+    profile: {
+      companyType: 'sme',
+      businessAge: '1to3',
+      region: 'seoul',
+      interests: ['ai', 'saas'],
+      businessOverview: 'AI 기반 SaaS 서비스',
+    },
+    announcement: {
+      id: 'test-5',
+      title: '가죽 피혁 소공인 장비지원',
+      summary: '가죽 피혁 봉제 소공인 제조장비 지원사업',
+      source: 'bizinfo',
+    },
+    expected: {
+      // Industry mismatch는 medium confidence이므로 hard fail이 아님
+      notHardFail: true,
+    },
+  },
+
+  // 6. 마감일 경과 (FAIL)
+  {
+    name: '마감일 경과 => FAIL',
+    profile: {
+      companyType: 'sme',
+      businessAge: '1to3',
+      region: 'seoul',
+    },
+    announcement: {
+      id: 'test-6',
+      title: '지원사업',
+      summary: '중소기업 대상',
+      source: 'bizinfo',
+      deadline: '2020-01-01', // 과거 날짜
+    },
+    expected: {
+      hardPass: false,
+      hasLabel: HARD_FILTER_LABELS.DEADLINE_PASSED,
+    },
+  },
+
+  // 7. 모든 조건 통과 (MSS with parsed data)
+  {
+    name: 'MSS 공고 + 조건 충족 => PASS (high confidence)',
+    profile: {
+      companyType: 'sme',
+      businessAge: '1to3',
+      region: 'seoul',
+    },
+    announcement: {
+      id: 'test-7',
+      title: '서울 중소기업 R&D 지원',
+      summary: '서울 소재 중소기업 대상',
+      source: 'mss_api',
+      parsed: {
+        eligibilityText: '서울 소재 중소기업',
+      },
+      deadline: '2030-12-31',
+    },
+    expected: {
+      hardPass: true,
+      hardConfidence: 'high',
+    },
+  },
+]
+
+// applyHardFilter 테스트 실행
+function testApplyHardFilter() {
+  console.log('\n' + '='.repeat(60))
+  console.log('applyHardFilter v2 테스트')
+  console.log('='.repeat(60))
+
+  let passed = 0
+  let failed = 0
+  const failures = []
+
+  for (const tc of applyHardFilterTestCases) {
+    const result = applyHardFilter(tc.profile, tc.announcement)
+
+    let success = true
+    let failReason = ''
+
+    // hardPass 검증
+    if (tc.expected.hardPass !== undefined) {
+      if (result.hardPass !== tc.expected.hardPass) {
+        success = false
+        failReason = `hardPass: expected ${tc.expected.hardPass}, got ${result.hardPass}`
+      }
+    }
+
+    // notHardFail 검증 (hardPass !== false)
+    if (success && tc.expected.notHardFail) {
+      if (result.hardPass === false) {
+        success = false
+        failReason = `notHardFail: expected hardPass !== false, got ${result.hardPass}`
+      }
+    }
+
+    // hasLabel 검증 (hardFailReasons에 특정 라벨 포함)
+    if (success && tc.expected.hasLabel) {
+      const hasLabel = result.hardFailReasons.some(r => r.label === tc.expected.hasLabel)
+      if (!hasLabel) {
+        success = false
+        failReason = `hasLabel: expected ${tc.expected.hasLabel} in hardFailReasons, got ${result.hardFailReasons.map(r => r.label).join(', ')}`
+      }
+    }
+
+    // hasUnknownLabel 검증 (hardUnknownReasons에 특정 라벨 포함)
+    if (success && tc.expected.hasUnknownLabel) {
+      const hasLabel = result.hardUnknownReasons.some(r => r.label === tc.expected.hasUnknownLabel)
+      if (!hasLabel) {
+        success = false
+        failReason = `hasUnknownLabel: expected ${tc.expected.hasUnknownLabel} in hardUnknownReasons, got ${result.hardUnknownReasons.map(r => r.label).join(', ')}`
+      }
+    }
+
+    // hardConfidence 검증
+    if (success && tc.expected.hardConfidence) {
+      if (result.hardConfidence !== tc.expected.hardConfidence) {
+        success = false
+        failReason = `hardConfidence: expected ${tc.expected.hardConfidence}, got ${result.hardConfidence}`
+      }
+    }
+
+    if (success) {
+      console.log(`✅ PASS: ${tc.name}`)
+      passed++
+    } else {
+      console.log(`❌ FAIL: ${tc.name}`)
+      console.log(`   ${failReason}`)
+      console.log(`   Result:`, JSON.stringify(result, null, 2).split('\n').map(l => '   ' + l).join('\n'))
+      failed++
+      failures.push({ name: tc.name, reason: failReason, result })
+    }
+  }
+
+  console.log('\n' + '='.repeat(60))
+  console.log(`applyHardFilter 테스트: ${applyHardFilterTestCases.length}개 중 ${passed} 통과, ${failed} 실패`)
+  console.log('='.repeat(60))
+
+  return { passed, failed, total: applyHardFilterTestCases.length }
+}
+
 // 메인 실행
 export function runAllTests() {
   const hardFilterResults = runTests()
   testBuildHardRequirements()
   const relevanceResults = testRelevanceAndIndustryMismatch()
+  const applyHardFilterResults = testApplyHardFilter()
 
-  const totalPassed = hardFilterResults.passed + relevanceResults.passed
-  const totalFailed = hardFilterResults.failed + relevanceResults.failed
-  const totalTests = hardFilterResults.total + relevanceResults.total
+  const totalPassed = hardFilterResults.passed + relevanceResults.passed + applyHardFilterResults.passed
+  const totalFailed = hardFilterResults.failed + relevanceResults.failed + applyHardFilterResults.failed
+  const totalTests = hardFilterResults.total + relevanceResults.total + applyHardFilterResults.total
 
   console.log('\n' + '='.repeat(60))
   console.log(`전체 테스트 결과: ${totalTests}개 중 ${totalPassed} 통과, ${totalFailed} 실패`)
@@ -611,4 +842,4 @@ if (typeof window === 'undefined' && typeof process !== 'undefined') {
   runAllTests()
 }
 
-export { testCases, scoreTestCases, profiles }
+export { testCases, scoreTestCases, profiles, applyHardFilterTestCases }

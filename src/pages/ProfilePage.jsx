@@ -337,6 +337,7 @@ function CheckboxGroup({ label, options, selectedValues = [], onToggle }) {
 }
 
 // 섹션 헤더 컴포넌트
+// eslint-disable-next-line no-unused-vars
 function SectionHeader({ icon: Icon, title, description }) {
   return (
     <div className="flex items-start gap-3 mb-4">
@@ -487,15 +488,17 @@ export function ProfilePage() {
       activeProfile.targetMarket || '',
     ].join(' ')
     return detectDomainKeywords(text)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProfile?.serviceName, activeProfile?.businessOverview, activeProfile?.targetMarket])
 
   // 핵심 도메인 선택 여부
+  const activeInterests = activeProfile?.interests
   const hasCoreDomain = useMemo(() => {
-    if (!activeProfile?.interests) return false
-    return activeProfile.interests.some(i =>
+    if (!activeInterests) return false
+    return activeInterests.some(i =>
       CORE_INTERESTS.some(ci => ci.value === i)
     )
-  }, [activeProfile?.interests])
+  }, [activeInterests])
 
   // 추천 품질 계산
   const recommendationQuality = useMemo(() => {

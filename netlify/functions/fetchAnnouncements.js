@@ -83,8 +83,8 @@ const MSS_API_URL = 'https://apis.data.go.kr/1421000/mssBizService_v2/getbizList
 let cache = { data: null, timestamp: null }
 const CACHE_DURATION = 60 * 60 * 1000 // 1시간
 
-// 분야 코드 매핑(현재 미사용이지만 유지)
-const categoryCodeMap = {
+// 분야 코드 매핑 (향후 확장용)
+const CATEGORY_CODE_MAP = {
   '01': '경영',
   '02': '금융',
   '03': '기술',
@@ -400,7 +400,8 @@ const extractCategoriesFromText = (text) => {
   return [...new Set(categories)] // 중복 제거
 }
 
-// 해시태그/문자열에서 추가 카테고리 추출 (기존 함수 유지 - 호환성)
+// 해시태그/문자열에서 추가 카테고리 추출 (향후 확장용)
+// eslint-disable-next-line no-unused-vars
 const extractCategoriesFromHashtags = (hashtags) => {
   return extractCategoriesFromText(hashtags)
 }
@@ -897,8 +898,11 @@ export async function handler(event) {
     // ==========================
     // ✅ 키 분리
     // ==========================
+    // eslint-disable-next-line no-undef
     const bizinfoKey = process.env.BIZINFO_API_KEY || process.env.DATA_GO_KR_API_KEY
+    // eslint-disable-next-line no-undef
     const kstartupKey = process.env.DATA_GO_KR_API_KEY
+    // eslint-disable-next-line no-undef
     const mssKey = process.env.MSS_API_KEY || process.env.DATA_GO_KR_API_KEY
 
     // API 키가 없으면 mock 데이터 반환
