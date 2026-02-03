@@ -84,7 +84,7 @@ const normalizeDetailUrl = (organization, detailUrl) => {
 const extractKeyword = (title) => {
   return String(title || '')
     .replace(/20\d{2}년도?\s*/g, '') // 연도 제거 (2024년, 2025년도 등)
-    .replace(/[\[\]()【】]/g, '') // 괄호 제거
+    .replace(/[[\]()【】]/g, '') // 괄호 제거
     .trim()
     .slice(0, 30)
 }

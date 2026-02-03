@@ -1,8 +1,10 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useProfileStore } from '../stores/useProfileStore'
+import { useProfileStore, INTERESTS } from '../stores/useProfileStore'
 import { useBookmarkStore } from '../stores/useBookmarkStore'
-import { mockAnnouncements, categories as categoryOptions } from '../data/mockAnnouncements'
+import { useSearchStore } from '../stores/useSearchStore'
+import { mockAnnouncements } from '../data/mockAnnouncements'
+import { searchAnnouncements } from '../api/announcements'
 import { getAnnouncementLink } from '../utils/getAnnouncementLink'
 import {
   calculateMatchingScore,
@@ -10,6 +12,8 @@ import {
   formatDday,
   groupByMonth,
   formatMonthName,
+  extractRegionRestriction,
+  getRegionName,
 } from '../utils/matchingScore'
 import {
   Calendar,
@@ -21,13 +25,19 @@ import {
   Building2,
   Clock,
   TrendingUp,
-  X,
+  MapPin,
+  Coins,
   Sun,
   Moon,
   UserCircle,
   ExternalLink,
+  Loader2,
+  AlertTriangle,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
+
+// 맞춤 공고 필터링 기준 점수
+const MATCHING_THRESHOLD = 30
 
 const VIEWS = [
   { value: 'monthly', label: '월간' },
@@ -35,12 +45,14 @@ const VIEWS = [
   { value: 'yearly', label: '연간' },
 ]
 
-const CATEGORIES = ['전체', 'AI', '음악', 'ICT', 'IT', 'CT', '콘텐츠', '창업']
+// SearchPage와 동일한 카테고리 필터 (INTERESTS 기반)
+const CATEGORIES = ['전체', ...INTERESTS.map(i => i.value)]
 
 export function CalendarPage() {
   const navigate = useNavigate()
   const { getActiveProfile } = useProfileStore()
   const { bookmarks, toggleBookmark, isBookmarked } = useBookmarkStore()
+  const { results: searchResults, setResults: setSearchResults } = useSearchStore()
 
   const activeProfile = getActiveProfile()
 
@@ -50,10 +62,38 @@ export function CalendarPage() {
   const [selectedCategory, setSelectedCategory] = useState('전체')
   const [selectedOrg, setSelectedOrg] = useState('')
   const [showHighMatchOnly, setShowHighMatchOnly] = useState(false)
+  const [showOnlyMatched, setShowOnlyMatched] = useState(false) // 맞춤 공고만 표시
   const [showBookmarksOnly, setShowBookmarksOnly] = useState(false)
   const [showExpired, setShowExpired] = useState(false) // 마감된 공고 표시 여부
   const [darkMode, setDarkMode] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [isLoading, setIsLoading] = useState(false)
+  const [announcements, setAnnouncements] = useState([])
+
+  // API에서 공고 데이터 가져오기
+  useEffect(() => {
+    const fetchData = async () => {
+      // 이미 검색 결과가 있으면 사용
+      if (searchResults && searchResults.length > 0) {
+        setAnnouncements(searchResults)
+        return
+      }
+
+      setIsLoading(true)
+      try {
+        const data = await searchAnnouncements('', {})
+        setAnnouncements(data)
+        setSearchResults(data) // 검색 스토어에도 저장
+      } catch (error) {
+        console.error('[CalendarPage] API 오류, mock 데이터 사용:', error)
+        setAnnouncements(mockAnnouncements)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+    fetchData()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // 다크모드 토글
   useEffect(() => {
@@ -66,32 +106,51 @@ export function CalendarPage() {
 
   // 기관 목록 추출
   const organizations = useMemo(() => {
-    const orgs = [...new Set(mockAnnouncements.map((a) => a.organization))]
+    const orgs = [...new Set(announcements.map((a) => a.organization))]
     return orgs.sort()
-  }, [])
+  }, [announcements])
 
   // 필터링된 공고 목록
   const filteredAnnouncements = useMemo(() => {
-    // 디버깅: 전체 공고 수와 연도별 분포 확인
-    console.log('[Calendar Debug] 전체 공고 수:', mockAnnouncements.length)
-    console.log('[Calendar Debug] 현재 선택된 연도:', year)
-    console.log('[Calendar Debug] 활성 프로필:', activeProfile?.name || '없음')
+    let filtered = announcements.map((announcement) => {
+      const regionRestriction = extractRegionRestriction(announcement)
+      const isRegionMismatch =
+        activeProfile?.region &&
+        regionRestriction.type === 'restricted' &&
+        regionRestriction.region !== activeProfile.region
 
-    let filtered = mockAnnouncements.map((announcement) => ({
-      ...announcement,
-      matchingScore: calculateMatchingScore(activeProfile, announcement),
-      dday: calculateDday(announcement.deadline),
-    }))
+      return {
+        ...announcement,
+        matchingScore: calculateMatchingScore(activeProfile, announcement),
+        dday: announcement.deadline ? calculateDday(announcement.deadline) : 999,
+        regionRestriction,
+        isRegionMismatch,
+      }
+    })
 
-    // 연도 필터
+    // 연도 필터 (deadline이 있는 경우만)
     filtered = filtered.filter((a) => {
+      if (!a.deadline) return false
       const deadlineYear = new Date(a.deadline).getFullYear()
       return deadlineYear === year
     })
 
-    // 카테고리 필터
+    // 카테고리 필터 (INTERESTS 기반, SearchPage와 동일)
     if (selectedCategory !== '전체') {
-      filtered = filtered.filter((a) => a.category.includes(selectedCategory))
+      const interest = INTERESTS.find(i => i.value === selectedCategory)
+      const keywords = interest?.keywords || [selectedCategory.toLowerCase()]
+
+      filtered = filtered.filter((a) => {
+        const searchText = [
+          a.title || '',
+          a.summary || '',
+          ...(a.category || []),
+          ...(a.tags || []),
+          ...(a.eligibility || []),
+        ].join(' ').toLowerCase()
+
+        return keywords.some(kw => searchText.includes(kw.toLowerCase()))
+      })
     }
 
     // 기관 필터
@@ -99,9 +158,14 @@ export function CalendarPage() {
       filtered = filtered.filter((a) => a.organization === selectedOrg)
     }
 
-    // 높은 매칭률만
+    // 높은 매칭률만 (80% 이상)
     if (showHighMatchOnly) {
       filtered = filtered.filter((a) => a.matchingScore >= 80)
+    }
+
+    // 맞춤 공고만 표시 (프로필 있고 토글 켜진 경우)
+    if (showOnlyMatched && activeProfile) {
+      filtered = filtered.filter((a) => a.matchingScore >= MATCHING_THRESHOLD)
     }
 
     // 북마크만
@@ -114,11 +178,8 @@ export function CalendarPage() {
       filtered = filtered.filter((a) => a.dday >= 0)
     }
 
-    // 디버깅: 필터링 결과
-    console.log('[Calendar Debug] 필터링 후 공고 수:', filtered.length)
-
     return filtered
-  }, [year, selectedCategory, selectedOrg, showHighMatchOnly, showBookmarksOnly, showExpired, activeProfile, bookmarks])
+  }, [announcements, year, selectedCategory, selectedOrg, showHighMatchOnly, showOnlyMatched, showBookmarksOnly, showExpired, activeProfile, bookmarks])
 
   // 월별 그룹핑
   const groupedAnnouncements = useMemo(() => {
@@ -227,7 +288,7 @@ export function CalendarPage() {
             }`}>
               <UserCircle size={20} className="text-yellow-500 flex-shrink-0" />
               <p className={`text-sm ${darkMode ? 'text-yellow-200' : 'text-yellow-700'}`}>
-                프로필을 먼저 설정하면 맞춤형 매칭률을 확인할 수 있습니다.
+                프로필을 설정하면 맞춤형 공고 추천과 매칭률을 확인할 수 있습니다.
               </p>
               <Link
                 to="/profile"
@@ -235,6 +296,30 @@ export function CalendarPage() {
               >
                 프로필 설정 →
               </Link>
+            </div>
+          )}
+
+          {/* 프로필 설정된 경우 맞춤 공고 토글 표시 */}
+          {activeProfile && (
+            <div className={`mt-4 flex items-center gap-3 p-3 rounded-lg ${
+              darkMode ? 'bg-blue-900/30 border border-blue-700' : 'bg-blue-50 border border-blue-200'
+            }`}>
+              <TrendingUp size={20} className="text-blue-500 flex-shrink-0" />
+              <p className={`text-sm ${darkMode ? 'text-blue-200' : 'text-blue-700'}`}>
+                <span className="font-medium">{activeProfile.serviceName || activeProfile.companyName || '내 프로필'}</span> 기준 맞춤 공고
+              </p>
+              <label className="flex items-center gap-2 cursor-pointer ml-auto">
+                <span className={`text-sm font-medium ${darkMode ? 'text-blue-200' : 'text-blue-700'}`}>맞춤만</span>
+                <div className="relative">
+                  <input
+                    type="checkbox"
+                    checked={showOnlyMatched}
+                    onChange={(e) => setShowOnlyMatched(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600 dark:bg-gray-700 dark:peer-checked:bg-blue-600"></div>
+                </div>
+              </label>
             </div>
           )}
         </div>
@@ -255,6 +340,7 @@ export function CalendarPage() {
                   setSelectedCategory('전체')
                   setSelectedOrg('')
                   setShowHighMatchOnly(false)
+                  setShowOnlyMatched(false)
                   setShowBookmarksOnly(false)
                   setShowExpired(false)
                 }}
@@ -264,28 +350,53 @@ export function CalendarPage() {
               </button>
             </div>
 
-            {/* 분야 필터 */}
+            {/* 분야 필터 - SearchPage와 동일 */}
             <div className="mb-4">
               <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
                 분야
               </label>
-              <div className="flex flex-wrap gap-1.5">
-                {CATEGORIES.map((cat) => (
-                  <button
-                    key={cat}
-                    onClick={() => setSelectedCategory(cat)}
-                    className={`px-2.5 py-1 text-xs rounded-full transition-colors ${
-                      selectedCategory === cat
-                        ? 'bg-blue-600 text-white'
-                        : darkMode
-                        ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    }`}
-                  >
-                    {cat}
-                  </button>
-                ))}
-              </div>
+              {/* 전체 버튼 */}
+              <button
+                onClick={() => setSelectedCategory('전체')}
+                className={`w-full mb-2 px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                  selectedCategory === '전체'
+                    ? 'bg-blue-600 text-white'
+                    : darkMode
+                    ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                전체
+              </button>
+              {/* 그룹별 카테고리 */}
+              {['기술', '산업', '지원유형'].map(group => {
+                const groupInterests = INTERESTS.filter(i => i.group === group)
+                if (groupInterests.length === 0) return null
+                return (
+                  <div key={group} className="mb-2">
+                    <span className={`text-xs font-medium ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
+                      {group}
+                    </span>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {groupInterests.map((interest) => (
+                        <button
+                          key={interest.value}
+                          onClick={() => setSelectedCategory(interest.value)}
+                          className={`px-2 py-0.5 text-xs rounded-full transition-colors ${
+                            selectedCategory === interest.value
+                              ? 'bg-blue-600 text-white'
+                              : darkMode
+                              ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                          }`}
+                        >
+                          {interest.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
             </div>
 
             {/* 기관 필터 */}
@@ -345,7 +456,12 @@ export function CalendarPage() {
 
           {/* 메인 콘텐츠 - 월별 타임라인 */}
           <main className="flex-1 space-y-6 pb-8">
-            {monthsToShow.map((monthKey) => {
+            {isLoading ? (
+              <div className="flex items-center justify-center py-20">
+                <Loader2 size={40} className="animate-spin text-blue-500" />
+              </div>
+            ) : null}
+            {!isLoading && monthsToShow.map((monthKey) => {
               const announcements = groupedAnnouncements[monthKey] || []
               const monthName = formatMonthName(monthKey)
 
@@ -446,8 +562,15 @@ function AnnouncementCard({ announcement, darkMode, isBookmarked, onBookmarkTogg
             {announcement.title}
           </h4>
 
-          {/* 기관 + 마감일 */}
-          <div className="flex items-center gap-3 text-sm">
+          {/* 요약 (SearchPage와 동일) */}
+          {announcement.summary && (
+            <p className={`text-sm mt-1 line-clamp-2 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+              {announcement.summary}
+            </p>
+          )}
+
+          {/* 기관 + 마감일 + 지역 */}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm mt-2">
             <span className={`flex items-center gap-1 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
               <Building2 size={14} />
               {announcement.organization}
@@ -456,12 +579,21 @@ function AnnouncementCard({ announcement, darkMode, isBookmarked, onBookmarkTogg
               <Clock size={14} />
               {announcement.deadline}
             </span>
+            {announcement.regionRestriction?.type !== 'nationwide' && announcement.regionRestriction?.region && (
+              <span className={`flex items-center gap-1 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                <MapPin size={14} />
+                {getRegionName(announcement.regionRestriction.region, announcement.regionRestriction.detectedCity)}
+              </span>
+            )}
           </div>
 
           {/* 지원금액 */}
-          <div className={`mt-2 text-sm font-medium ${darkMode ? 'text-blue-400' : 'text-blue-600'}`}>
-            {announcement.budget}
-          </div>
+          {announcement.budget && (
+            <div className={`flex items-center gap-1 mt-2 text-sm font-medium ${darkMode ? 'text-blue-400' : 'text-blue-600'}`}>
+              <Coins size={14} />
+              {announcement.budget}
+            </div>
+          )}
         </div>
 
         {/* 버튼 영역 */}
@@ -514,6 +646,20 @@ function AnnouncementCard({ announcement, darkMode, isBookmarked, onBookmarkTogg
           </span>
         ))}
       </div>
+
+      {/* 지역 불일치 경고 */}
+      {announcement.isRegionMismatch && (
+        <div className={`flex items-center gap-1.5 mt-2 px-2 py-1 rounded text-xs ${
+          darkMode
+            ? 'bg-orange-900/30 border border-orange-700 text-orange-300'
+            : 'bg-orange-50 border border-orange-200 text-orange-700'
+        }`}>
+          <AlertTriangle size={12} />
+          <span>
+            {getRegionName(announcement.regionRestriction.region, announcement.regionRestriction.detectedCity)} 지역 관련 공고입니다 (지원 자격을 확인하세요)
+          </span>
+        </div>
+      )}
     </div>
   )
 }

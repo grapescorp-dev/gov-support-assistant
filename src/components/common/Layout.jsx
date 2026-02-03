@@ -149,6 +149,7 @@ export function Layout() {
               정부지원사업 어시스턴트
             </Link>
             <nav className="hidden md:flex gap-1">
+              {/* eslint-disable-next-line no-unused-vars */}
               {navItems.map(({ to, icon: Icon, label }) => (
                 <NavLink
                   key={to}
@@ -173,6 +174,7 @@ export function Layout() {
 
         {/* 모바일 네비게이션 */}
         <nav className="md:hidden flex border-t border-gray-100 overflow-x-auto">
+          {/* eslint-disable-next-line no-unused-vars */}
           {navItems.map(({ to, icon: Icon, label }) => (
             <NavLink
               key={to}

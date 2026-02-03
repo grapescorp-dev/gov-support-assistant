@@ -17,6 +17,7 @@ const createEmptyProfile = (name = '새 프로필') => ({
   companyType: '',
   businessAge: '',
   region: '',
+  subRegion: '', // 서울시 구 단위 (region이 'seoul'인 경우에만 사용)
 
   // 사업 규모
   revenue: '',
@@ -215,13 +216,51 @@ export const BUSINESS_AGES = [
 export const REGIONS = [
   { value: 'seoul', label: '서울' },
   { value: 'gyeonggi', label: '경기' },
-  { value: 'gangwon', label: '강원' },
   { value: 'incheon', label: '인천' },
-  { value: 'busan', label: '부산' },
-  { value: 'daegu', label: '대구' },
+  { value: 'gangwon', label: '강원' },
   { value: 'daejeon', label: '대전' },
+  { value: 'sejong', label: '세종' },
+  { value: 'chungbuk', label: '충북' },
+  { value: 'chungnam', label: '충남' },
+  { value: 'jeonbuk', label: '전북' },
+  { value: 'jeonnam', label: '전남' },
   { value: 'gwangju', label: '광주' },
-  { value: 'other', label: '기타' },
+  { value: 'gyeongbuk', label: '경북' },
+  { value: 'gyeongnam', label: '경남' },
+  { value: 'daegu', label: '대구' },
+  { value: 'busan', label: '부산' },
+  { value: 'ulsan', label: '울산' },
+  { value: 'jeju', label: '제주' },
+]
+
+// 서울특별시 구 목록
+export const SEOUL_DISTRICTS = [
+  { value: '', label: '전체 (서울시)' },
+  { value: 'gangnam', label: '강남구' },
+  { value: 'gangdong', label: '강동구' },
+  { value: 'gangbuk', label: '강북구' },
+  { value: 'gangseo', label: '강서구' },
+  { value: 'gwanak', label: '관악구' },
+  { value: 'gwangjin', label: '광진구' },
+  { value: 'guro', label: '구로구' },
+  { value: 'geumcheon', label: '금천구' },
+  { value: 'nowon', label: '노원구' },
+  { value: 'dobong', label: '도봉구' },
+  { value: 'dongdaemun', label: '동대문구' },
+  { value: 'dongjak', label: '동작구' },
+  { value: 'mapo', label: '마포구' },
+  { value: 'seodaemun', label: '서대문구' },
+  { value: 'seocho', label: '서초구' },
+  { value: 'seongdong', label: '성동구' },
+  { value: 'seongbuk', label: '성북구' },
+  { value: 'songpa', label: '송파구' },
+  { value: 'yangcheon', label: '양천구' },
+  { value: 'yeongdeungpo', label: '영등포구' },
+  { value: 'yongsan', label: '용산구' },
+  { value: 'eunpyeong', label: '은평구' },
+  { value: 'jongno', label: '종로구' },
+  { value: 'jung', label: '중구' },
+  { value: 'jungnang', label: '중랑구' },
 ]
 
 export const REVENUES = [
@@ -255,14 +294,29 @@ export const INVESTMENT_STAGES = [
   { value: 'seriesB', label: '시리즈B 이상' },
 ]
 
+// 관심분야 카테고리 (프로필 + 검색 페이지 공용)
+// 그룹별로 정리: 기술 > 산업 > 지원유형
 export const INTERESTS = [
-  { value: 'AI', label: 'AI' },
-  { value: '음악', label: '음악' },
-  { value: 'ICT', label: 'ICT' },
-  { value: 'IT', label: 'IT' },
-  { value: 'CT', label: 'CT' },
-  { value: '콘텐츠', label: '콘텐츠' },
-  { value: '창업', label: '창업' },
-  { value: '수출', label: '수출' },
-  { value: 'R&D', label: 'R&D' },
+  // 기술 분야
+  { value: 'AI', label: 'AI/데이터', group: '기술', keywords: ['ai', '인공지능', '빅데이터', '머신러닝', '딥러닝'] },
+  { value: 'ICT', label: 'ICT/SW', group: '기술', keywords: ['ict', 'sw', '소프트웨어', '정보통신'] },
+  { value: '클라우드', label: '클라우드/SaaS', group: '기술', keywords: ['클라우드', 'saas', 'paas', 'iaas'] },
+  { value: '블록체인', label: '블록체인/핀테크', group: '기술', keywords: ['블록체인', '핀테크', '금융'] },
+  { value: 'IoT', label: 'IoT/스마트', group: '기술', keywords: ['iot', '사물인터넷', '스마트'] },
+
+  // 산업 분야
+  { value: '콘텐츠', label: '콘텐츠/미디어', group: '산업', keywords: ['콘텐츠', '미디어', '영상', '음악', '음원', '게임', '웹툰', '애니메이션'] },
+  { value: '바이오', label: '바이오/헬스케어', group: '산업', keywords: ['바이오', '헬스케어', '의료', '제약', '진단'] },
+  { value: '제조', label: '제조/스마트팩토리', group: '산업', keywords: ['제조', '스마트팩토리', '로봇', '자동화'] },
+  { value: '에너지', label: '에너지/친환경', group: '산업', keywords: ['에너지', '친환경', '그린', '탄소중립', 'esg', '재생에너지'] },
+  { value: '농식품', label: '농식품/푸드테크', group: '산업', keywords: ['농업', '농식품', '푸드테크', '스마트팜'] },
+  { value: '모빌리티', label: '모빌리티/물류', group: '산업', keywords: ['모빌리티', '자율주행', '전기차', '물류'] },
+  { value: '교육', label: '교육/에듀테크', group: '산업', keywords: ['교육', '에듀테크', '이러닝'] },
+  { value: '관광', label: '관광/문화', group: '산업', keywords: ['관광', '문화', '여행', '레저'] },
+  { value: '패션', label: '패션/뷰티', group: '산업', keywords: ['패션', '뷰티', '화장품', '의류'] },
+
+  // 지원 유형
+  { value: '창업', label: '창업지원', group: '지원유형', keywords: ['창업', '스타트업', '예비창업'] },
+  { value: '수출', label: '수출/해외진출', group: '지원유형', keywords: ['수출', '해외진출', '글로벌', '무역'] },
+  { value: 'R&D', label: 'R&D/기술개발', group: '지원유형', keywords: ['r&d', '연구개발', '기술개발'] },
 ]

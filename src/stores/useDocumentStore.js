@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware'
 
 export const useDocumentStore = create(
   persist(
-    (set, get) => ({
+    (set) => ({
       documents: [],
       currentDocument: null,
 

@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import {
   useProfileStore,
   COMPANY_TYPES,
   BUSINESS_AGES,
   REGIONS,
+  SEOUL_DISTRICTS,
   REVENUES,
   EMPLOYEES,
   CERTIFICATIONS,
@@ -11,6 +12,15 @@ import {
   INTERESTS,
 } from '../stores/useProfileStore'
 import { useToastStore } from '../stores/useToastStore'
+import {
+  INTERESTS_COPY,
+  SERVICE_NAME_COPY,
+  BUSINESS_OVERVIEW_COPY,
+  COMPANY_INFO_COPY,
+  REGION_COPY,
+  countDomainKeywords,
+  isOverviewAbstract,
+} from '../constants/microcopy'
 import {
   Save,
   Trash2,
@@ -23,10 +33,66 @@ import {
   Check,
   Edit3,
   X,
+  AlertCircle,
+  Lightbulb,
+  Star,
+  Zap,
+  MapPin,
 } from 'lucide-react'
 
+// 도메인 키워드 (matchingScore.js와 동일)
+const DOMAIN_KEYWORDS = {
+  ai: ['ai', '인공지능', '머신러닝', '딥러닝', 'llm', 'gpt', 'chatgpt'],
+  saas: ['saas', '구독', '클라우드', '서비스형'],
+  data: ['데이터', '빅데이터', '데이터분석', '데이터플랫폼'],
+  ict: ['ict', 'it', '정보통신', '소프트웨어', 'sw'],
+  content: ['콘텐츠', '미디어', '영상', '음악', '게임', '웹툰'],
+  fintech: ['핀테크', '금융', '블록체인', '암호화폐', '결제'],
+  bio: ['바이오', '헬스케어', '의료', '건강'],
+  manufacturing: ['제조', '생산', '공장', '스마트팩토리'],
+  foodtech: ['푸드테크', '식품', '음식'],
+  education: ['교육', '에듀테크', '이러닝', '학습'],
+  mobility: ['모빌리티', '자율주행', '전기차', '물류'],
+  energy: ['에너지', '친환경', '그린', '탄소중립', 'esg'],
+}
+
+// 도메인 한글명 매핑
+const DOMAIN_LABELS = {
+  ai: 'AI/인공지능',
+  saas: 'SaaS/클라우드',
+  data: '데이터',
+  ict: 'ICT/SW',
+  content: '콘텐츠/미디어',
+  fintech: '핀테크/금융',
+  bio: '바이오/헬스케어',
+  manufacturing: '제조/스마트팩토리',
+  foodtech: '푸드테크/식품',
+  education: '교육/에듀테크',
+  mobility: '모빌리티',
+  energy: '에너지/친환경',
+}
+
+// 핵심 도메인 (기술/산업 분야) - 우선 선택 유도
+const CORE_INTERESTS = INTERESTS.filter(i => i.group === '기술' || i.group === '산업')
+// 보조 관심분야 (지원유형)
+const SECONDARY_INTERESTS = INTERESTS.filter(i => i.group === '지원유형')
+
+// 텍스트에서 도메인 키워드 감지
+function detectDomainKeywords(text) {
+  if (!text) return []
+  const lowerText = text.toLowerCase()
+  const detected = []
+
+  for (const [domain, keywords] of Object.entries(DOMAIN_KEYWORDS)) {
+    if (keywords.some(kw => lowerText.includes(kw))) {
+      detected.push(domain)
+    }
+  }
+  return detected
+}
+
 // 재사용 가능한 Select 컴포넌트
-function SelectField({ label, name, value, onChange, options, placeholder }) {
+function SelectField({ label, name, value, onChange, options, placeholder, hint }) {
   return (
     <div>
       <label className="block text-sm font-medium text-gray-700 mb-2">{label}</label>
@@ -43,6 +109,201 @@ function SelectField({ label, name, value, onChange, options, placeholder }) {
           </option>
         ))}
       </select>
+      {hint && <p className="mt-1 text-xs text-gray-500">{hint}</p>}
+    </div>
+  )
+}
+
+// 추천 정확도 가이드 컴포넌트
+function KeywordGuide({ detectedKeywords, hasCoreDomain }) {
+  const count = detectedKeywords.length
+
+  if (count === 0 && !hasCoreDomain) {
+    return (
+      <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+        <div className="flex items-start gap-2">
+          <AlertCircle size={16} className="text-amber-500 mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-amber-700">업종 키워드를 추가해보세요</p>
+            <p className="text-xs text-amber-600 mt-0.5">
+              AI, 헬스케어, 콘텐츠 등 구체적인 키워드가 있으면 맞춤 추천이 가능합니다.
+            </p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (count >= 1 && count <= 2) {
+    return (
+      <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+        <div className="flex items-start gap-2">
+          <Lightbulb size={16} className="text-blue-500 mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-blue-700">기본 추천 가능</p>
+            <p className="text-xs text-blue-600 mt-0.5">
+              감지된 키워드: {detectedKeywords.map(d => DOMAIN_LABELS[d]).join(', ')}
+            </p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+      <div className="flex items-start gap-2">
+        <Zap size={16} className="text-green-500 mt-0.5 flex-shrink-0" />
+        <div>
+          <p className="text-sm font-medium text-green-700">맞춤 추천 가능</p>
+          <p className="text-xs text-green-600 mt-0.5">
+            감지된 키워드: {detectedKeywords.map(d => DOMAIN_LABELS[d]).join(', ')}
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// 추천 품질 시각화 컴포넌트
+function RecommendationQualityIndicator({ quality, reasons }) {
+  const configs = {
+    low: {
+      label: '낮음',
+      color: 'text-amber-600',
+      bgColor: 'bg-amber-100',
+      barColor: 'bg-amber-400',
+      width: '33%',
+    },
+    medium: {
+      label: '보통',
+      color: 'text-blue-600',
+      bgColor: 'bg-blue-100',
+      barColor: 'bg-blue-500',
+      width: '66%',
+    },
+    high: {
+      label: '높음',
+      color: 'text-green-600',
+      bgColor: 'bg-green-100',
+      barColor: 'bg-green-500',
+      width: '100%',
+    },
+  }
+
+  const config = configs[quality]
+
+  return (
+    <div className="bg-white rounded-xl p-5 border border-gray-200">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <Star size={18} className={config.color} />
+          <span className="font-medium text-gray-900">예상 추천 품질</span>
+        </div>
+        <span className={`px-2.5 py-1 rounded-full text-sm font-medium ${config.bgColor} ${config.color}`}>
+          {config.label}
+        </span>
+      </div>
+
+      <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden mb-3">
+        <div
+          className={`h-full ${config.barColor} transition-all duration-500`}
+          style={{ width: config.width }}
+        />
+      </div>
+
+      {reasons.length > 0 && (
+        <ul className="space-y-1">
+          {reasons.map((reason, idx) => (
+            <li key={idx} className="text-xs text-gray-600 flex items-start gap-1.5">
+              <span className="text-gray-400">•</span>
+              {reason}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+// 핵심 도메인 선택 컴포넌트 (최대 2개 제한)
+function CoreDomainSelector({ label, options, selectedValues = [], onToggle, maxCount = 2 }) {
+  // 그룹별로 분류
+  const groupedOptions = options.reduce((acc, opt) => {
+    if (!acc[opt.group]) acc[opt.group] = []
+    acc[opt.group].push(opt)
+    return acc
+  }, {})
+
+  const isMaxReached = selectedValues.filter(v =>
+    options.some(o => o.value === v)
+  ).length >= maxCount
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <label className="block text-sm font-medium text-gray-700">{label}</label>
+        <span className="text-xs text-gray-500">
+          {selectedValues.filter(v => options.some(o => o.value === v)).length}/{maxCount} 선택
+        </span>
+      </div>
+
+      {Object.entries(groupedOptions).map(([group, groupOpts]) => (
+        <div key={group} className="mb-4">
+          <p className="text-xs text-gray-500 mb-2 font-medium">{group}</p>
+          <div className="flex flex-wrap gap-2">
+            {groupOpts.map((opt) => {
+              const isSelected = selectedValues.includes(opt.value)
+              const isDisabled = !isSelected && isMaxReached
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => !isDisabled && onToggle(opt.value)}
+                  disabled={isDisabled}
+                  className={`px-3 py-2 rounded-lg text-sm font-medium transition-all border ${
+                    isSelected
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : isDisabled
+                      ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+                      : 'bg-white text-gray-700 border-gray-300 hover:border-blue-400'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// 보조 관심분야 선택 컴포넌트
+function SecondaryInterestSelector({ label, options, selectedValues = [], onToggle }) {
+  return (
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-3">{label}</label>
+      <div className="flex flex-wrap gap-2">
+        {options.map((opt) => {
+          const isSelected = selectedValues.includes(opt.value)
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => onToggle(opt.value)}
+              className={`px-3 py-2 rounded-lg text-sm font-medium transition-all border ${
+                isSelected
+                  ? 'bg-gray-700 text-white border-gray-700'
+                  : 'bg-white text-gray-700 border-gray-300 hover:border-gray-400'
+              }`}
+            >
+              {opt.label}
+            </button>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -76,6 +337,7 @@ function CheckboxGroup({ label, options, selectedValues = [], onToggle }) {
 }
 
 // 섹션 헤더 컴포넌트
+// eslint-disable-next-line no-unused-vars
 function SectionHeader({ icon: Icon, title, description }) {
   return (
     <div className="flex items-start gap-3 mb-4">
@@ -206,6 +468,7 @@ export function ProfilePage() {
     getActiveProfile,
     addProfile,
     updateProfile,
+    updateActiveProfile,
     deleteProfile,
     setActiveProfile,
     toggleCertification,
@@ -215,6 +478,81 @@ export function ProfilePage() {
   const { success, error } = useToastStore()
 
   const activeProfile = getActiveProfile()
+
+  // 도메인 키워드 감지 (서비스명 + 사업개요)
+  const detectedKeywords = useMemo(() => {
+    if (!activeProfile) return []
+    const text = [
+      activeProfile.serviceName || '',
+      activeProfile.businessOverview || '',
+      activeProfile.targetMarket || '',
+    ].join(' ')
+    return detectDomainKeywords(text)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProfile?.serviceName, activeProfile?.businessOverview, activeProfile?.targetMarket])
+
+  // 핵심 도메인 선택 여부
+  const activeInterests = activeProfile?.interests
+  const hasCoreDomain = useMemo(() => {
+    if (!activeInterests) return false
+    return activeInterests.some(i =>
+      CORE_INTERESTS.some(ci => ci.value === i)
+    )
+  }, [activeInterests])
+
+  // 추천 품질 계산
+  const recommendationQuality = useMemo(() => {
+    if (!activeProfile) return { quality: 'low', reasons: [] }
+
+    const reasons = []
+    let score = 0
+
+    // 핵심 도메인 선택
+    const coreCount = (activeProfile.interests || []).filter(i =>
+      CORE_INTERESTS.some(ci => ci.value === i)
+    ).length
+
+    if (coreCount >= 2) {
+      score += 3
+    } else if (coreCount === 1) {
+      score += 2
+      reasons.push('핵심 도메인 1개 더 선택하면 추천 정확도가 올라갑니다')
+    } else {
+      reasons.push('핵심 도메인을 선택해주세요')
+    }
+
+    // 서비스명/사업개요 키워드
+    if (detectedKeywords.length >= 3) {
+      score += 2
+    } else if (detectedKeywords.length >= 1) {
+      score += 1
+      reasons.push('사업 개요에 구체적인 키워드를 추가해보세요')
+    } else {
+      reasons.push('서비스명이나 사업 개요에 업종 키워드가 없습니다')
+    }
+
+    // 업력
+    if (activeProfile.businessAge) {
+      score += 1
+    } else {
+      reasons.push('업력을 선택하면 단계별 맞춤 추천이 가능합니다')
+    }
+
+    // 지역
+    if (activeProfile.region) {
+      score += 1
+    }
+
+    // 품질 결정
+    let quality = 'low'
+    if (score >= 5) {
+      quality = 'high'
+    } else if (score >= 3) {
+      quality = 'medium'
+    }
+
+    return { quality, reasons }
+  }, [activeProfile, detectedKeywords])
 
   const handleChange = (e) => {
     const { name, value } = e.target
@@ -344,14 +682,54 @@ export function ProfilePage() {
       {/* 프로필 편집 폼 */}
       {activeProfile && (
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* 섹션 1: 서비스 정보 */}
+          {/* 예상 추천 품질 (상단에 배치) */}
+          <RecommendationQualityIndicator
+            quality={recommendationQuality.quality}
+            reasons={recommendationQuality.reasons}
+          />
+
+          {/* 섹션 1: 핵심 도메인 (가장 중요) */}
+          <section className="bg-white rounded-xl p-6 border-2 border-blue-200">
+            <SectionHeader
+              icon={Target}
+              title="핵심 도메인"
+              description="가장 중요! 사업의 주요 분야를 선택하세요 (최대 2개)"
+            />
+
+            {/* [마이크로카피] 관심분야 안내 */}
+            <div className="mb-4 p-3 bg-blue-50 rounded-lg text-sm space-y-1">
+              <p className="font-medium text-blue-800">{INTERESTS_COPY.importance}</p>
+              <p className="text-blue-700">{INTERESTS_COPY.filterInfo}</p>
+              <p className="text-blue-600">{INTERESTS_COPY.tipGood}</p>
+              <p className="text-blue-600">{INTERESTS_COPY.tipBad}</p>
+            </div>
+
+            <CoreDomainSelector
+              label=""
+              options={CORE_INTERESTS}
+              selectedValues={activeProfile.interests || []}
+              onToggle={toggleInterest}
+              maxCount={2}
+            />
+
+            {/* [마이크로카피] 관심분야 비어있을 때 경고 */}
+            {!hasCoreDomain && (
+              <p className="mt-3 text-sm text-amber-600 flex items-center gap-1">
+                <AlertCircle size={14} />
+                {INTERESTS_COPY.emptyWarning}
+              </p>
+            )}
+          </section>
+
+          {/* 섹션 2: 서비스 정보 */}
           <section className="bg-white rounded-xl p-6 border border-gray-200">
             <SectionHeader
               icon={Briefcase}
               title="서비스 정보"
-              description="지원사업 매칭에 사용될 기본 정보입니다"
+              description="구체적일수록 추천 정확도가 높아집니다"
             />
             <div className="space-y-4">
+              {/* [마이크로카피] 서비스명 */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">서비스명</label>
                 <input
@@ -359,21 +737,62 @@ export function ProfilePage() {
                   name="serviceName"
                   value={activeProfile.serviceName || ''}
                   onChange={handleChange}
-                  placeholder="예: AI 기반 음악 추천 플랫폼"
+                  placeholder="예: AI 기반 헬스케어 플랫폼"
                   className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
+                <p className="mt-1 text-xs text-gray-500">{SERVICE_NAME_COPY.tip}</p>
+                <p className="text-xs text-gray-400">{SERVICE_NAME_COPY.examples}</p>
+
+                {/* [마이크로카피] 서비스명 키워드 상태 표시 */}
+                {(() => {
+                  const keywordCount = countDomainKeywords(activeProfile.serviceName || '')
+                  if (keywordCount === 0) {
+                    return (
+                      <p className="mt-2 text-xs text-amber-600 flex items-center gap-1">
+                        <AlertCircle size={12} />
+                        {SERVICE_NAME_COPY.status.zero}
+                      </p>
+                    )
+                  } else if (keywordCount <= 2) {
+                    return (
+                      <p className="mt-2 text-xs text-blue-600 flex items-center gap-1">
+                        <Lightbulb size={12} />
+                        {SERVICE_NAME_COPY.status.low}
+                      </p>
+                    )
+                  } else {
+                    return (
+                      <p className="mt-2 text-xs text-green-600 flex items-center gap-1">
+                        <Check size={12} />
+                        {SERVICE_NAME_COPY.status.good}
+                      </p>
+                    )
+                  }
+                })()}
               </div>
+
+              {/* [마이크로카피] 사업 개요 */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">사업 개요</label>
+                <p className="text-xs text-gray-500 mb-2">{BUSINESS_OVERVIEW_COPY.info}</p>
                 <textarea
                   name="businessOverview"
                   value={activeProfile.businessOverview || ''}
                   onChange={handleChange}
                   rows={3}
-                  placeholder="사업 아이템의 핵심 내용을 간략히 설명해주세요"
+                  placeholder={BUSINESS_OVERVIEW_COPY.placeholder}
                   className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
                 />
+
+                {/* [마이크로카피] 사업개요 추상적 경고 */}
+                {activeProfile.businessOverview && isOverviewAbstract(activeProfile.businessOverview) && (
+                  <p className="mt-2 text-xs text-amber-600 flex items-start gap-1">
+                    <AlertCircle size={12} className="flex-shrink-0 mt-0.5" />
+                    {BUSINESS_OVERVIEW_COPY.abstractWarning}
+                  </p>
+                )}
               </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">타겟 시장</label>
                 <textarea
@@ -385,16 +804,30 @@ export function ProfilePage() {
                   className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
                 />
               </div>
+
+              {/* 추천 정확도 가이드 */}
+              <KeywordGuide
+                detectedKeywords={detectedKeywords}
+                hasCoreDomain={hasCoreDomain}
+              />
             </div>
           </section>
 
-          {/* 섹션 2: 기업 기본정보 */}
+          {/* 섹션 3: 기업 기본정보 */}
           <section className="bg-white rounded-xl p-6 border border-gray-200">
             <SectionHeader
               icon={Building2}
               title="기업 기본정보"
               description="기업 형태와 업력에 따라 지원 자격이 달라집니다"
             />
+
+            {/* [마이크로카피] 기업형태/업력 안내 */}
+            <div className="mb-4 p-3 bg-gray-50 rounded-lg text-xs space-y-1">
+              <p className="text-gray-600">{COMPANY_INFO_COPY.companyType}</p>
+              <p className="text-gray-600">{COMPANY_INFO_COPY.businessAge.main}</p>
+              <p className="text-gray-500">{COMPANY_INFO_COPY.businessAge.sub}</p>
+            </div>
+
             <div className="grid md:grid-cols-3 gap-4">
               <SelectField
                 label="기업 형태"
@@ -409,18 +842,56 @@ export function ProfilePage() {
                 value={activeProfile.businessAge}
                 onChange={handleChange}
                 options={BUSINESS_AGES}
+                hint="예비창업자는 초기검증/사업화 공고를 우선 추천"
               />
-              <SelectField
-                label="소재지"
-                name="region"
-                value={activeProfile.region}
-                onChange={handleChange}
-                options={REGIONS}
-              />
+              <div>
+                <SelectField
+                  label="소재지"
+                  name="region"
+                  value={activeProfile.region}
+                  onChange={(e) => {
+                    handleChange(e)
+                    // 서울이 아닌 다른 지역 선택 시 subRegion 초기화
+                    if (e.target.value !== 'seoul') {
+                      updateActiveProfile({ subRegion: '' })
+                    }
+                  }}
+                  options={REGIONS}
+                />
+                {/* [마이크로카피] 지역 안내 */}
+                <div className="mt-2 text-xs text-gray-500 flex items-start gap-1">
+                  <MapPin size={12} className="flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p>{REGION_COPY.main}</p>
+                    <p className="text-gray-400">{REGION_COPY.sub}</p>
+                  </div>
+                </div>
+              </div>
+              {/* 서울 선택 시 구 단위 선택 표시 */}
+              {activeProfile.region === 'seoul' && (
+                <SelectField
+                  label="세부 지역 (서울시 구)"
+                  name="subRegion"
+                  value={activeProfile.subRegion || ''}
+                  onChange={handleChange}
+                  options={SEOUL_DISTRICTS}
+                  placeholder="구 선택 (선택사항)"
+                />
+              )}
             </div>
+
+            {/* 업종 부족 안내 */}
+            {(activeProfile.region || activeProfile.companyType) && !hasCoreDomain && detectedKeywords.length === 0 && (
+              <div className="mt-4 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                <p className="text-sm text-gray-600 flex items-center gap-1.5">
+                  <AlertCircle size={14} className="text-gray-400" />
+                  업종 정보가 부족하면 지역/형태 무관 공고 위주로 노출됩니다
+                </p>
+              </div>
+            )}
           </section>
 
-          {/* 섹션 3: 사업 규모 */}
+          {/* 섹션 4: 사업 규모 */}
           <section className="bg-white rounded-xl p-6 border border-gray-200">
             <SectionHeader
               icon={Users}
@@ -445,7 +916,7 @@ export function ProfilePage() {
             </div>
           </section>
 
-          {/* 섹션 4: 인증 및 투자 */}
+          {/* 섹션 5: 인증 및 투자 */}
           <section className="bg-white rounded-xl p-6 border border-gray-200">
             <SectionHeader
               icon={Award}
@@ -469,17 +940,17 @@ export function ProfilePage() {
             </div>
           </section>
 
-          {/* 섹션 5: 관심 분야 */}
+          {/* 섹션 6: 보조 관심분야 */}
           <section className="bg-white rounded-xl p-6 border border-gray-200">
             <SectionHeader
-              icon={Target}
-              title="관심 분야"
-              description="관심 있는 지원사업 분야를 선택해주세요"
+              icon={Lightbulb}
+              title="보조 관심분야"
+              description="추가로 관심 있는 지원 유형을 선택하세요 (선택사항)"
             />
-            <CheckboxGroup
-              label="분야 선택 (다중 선택 가능)"
-              options={INTERESTS}
-              selectedValues={activeProfile.interests}
+            <SecondaryInterestSelector
+              label=""
+              options={SECONDARY_INTERESTS}
+              selectedValues={activeProfile.interests || []}
               onToggle={toggleInterest}
             />
           </section>

@@ -6,8 +6,8 @@ export function DocumentsPage() {
   const { documents, deleteDocument, createDocument } = useDocumentStore()
 
   const handleCreateNew = () => {
-    const newDoc = createDocument('temp', '새 문서')
-    // 실제로는 지원사업 선택 후 생성
+    createDocument('temp', '새 문서')
+    // 실제로는 지원사업 선택 후 생성하여 해당 문서로 이동
   }
 
   return (
