@@ -1,6 +1,7 @@
 // API 호출 함수들
 
-const API_BASE = '/.netlify/functions'
+// 로컬 개발 환경에서는 /api 사용 (vite proxy), 프로덕션에서는 /.netlify/functions 사용
+const API_BASE = import.meta.env.DEV ? '/api' : '/.netlify/functions'
 
 // 실제 공고 데이터 가져오기 (기업마당 API)
 export async function fetchRealAnnouncements(options = {}) {

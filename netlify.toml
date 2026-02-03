@@ -1,5 +1,6 @@
 [build]
-  command = "rm -rf node_modules package-lock.json && npm install && npm run build"
+  # SPA fallback용 _redirects 파일도 빌드 시 생성
+  command = "rm -rf node_modules package-lock.json && npm install && npm run build && echo '/* /index.html 200' > dist/_redirects"
   publish = "dist"
   functions = "netlify/functions"
 
@@ -9,13 +10,8 @@
   port = 8888
   autoLaunch = false
 
+# API 라우팅 - Netlify Functions로 프록시
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/:splat"
-  status = 200
-
-# SPA 라우팅 - 모든 경로를 index.html로 (API 제외)
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
   status = 200

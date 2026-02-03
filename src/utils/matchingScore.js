@@ -1900,17 +1900,19 @@ const RELEVANCE_THRESHOLD = 12
 
 /**
  * Relevance Gate 미달 시 점수 상한
- * - 추천 목록(30점 이상)에 포함되지 않도록 49점으로 제한
+ * [v2.1] 29점으로 변경 - 추천 목록(30점 이상)에 포함되지 않도록 함
+ * - 기존 49점은 추천 목록에 여전히 포함될 수 있었음
  */
-const RELEVANCE_GATE_CAP = 49
+const RELEVANCE_GATE_CAP = 29
 
 /**
  * Industry Mismatch Penalty: 업종 불일치 시 감점
- * - 강한 불일치(제조/시설/공간): -35점
- * - 일반 불일치: -25점
+ * [v2.1] 패널티 강화 - 관광/수산/지역특화 등 명확한 업종 불일치 방지
+ * - 강한 불일치(제조/시설/관광/수산/지역특화): -40점
+ * - 일반 불일치: -30점
  */
-const INDUSTRY_MISMATCH_PENALTY_STRONG = -35
-const INDUSTRY_MISMATCH_PENALTY_NORMAL = -25
+const INDUSTRY_MISMATCH_PENALTY_STRONG = -40
+const INDUSTRY_MISMATCH_PENALTY_NORMAL = -30
 
 /**
  * Stage Boost: 예비창업자 + 초기검증 키워드 가점
@@ -1940,7 +1942,7 @@ const INDUSTRY_SPECIFIC_KEYWORDS = {
   },
   // 식품/요식업
   food: {
-    keywords: ['식품', '요식업', '외식업', '음식점', '식당', '베이커리', '제과', '제빵', '정육', '수산', '농수산',
+    keywords: ['식품', '요식업', '외식업', '음식점', '식당', '베이커리', '제과', '제빵', '정육', '농수산',
                '반찬', '도시락', '케이터링', '프랜차이즈', '가맹점'],
     allowedInterests: ['foodtech', 'bio'],
     penaltyLevel: 'normal',
@@ -1963,6 +1965,72 @@ const INDUSTRY_SPECIFIC_KEYWORDS = {
     allowedInterests: ['fashion', 'bio', 'healthcare'],
     penaltyLevel: 'normal',
   },
+  // [NEW] 관광/여행/숙박 (강한 패널티 - AI/ICT 서비스와 명확히 다른 업종)
+  tourismHospitality: {
+    keywords: ['관광', '여행', '여행사', '숙박', '호텔', '펜션', '게스트하우스', '리조트', '캠핑', '글램핑',
+               '민박', '모텔', '레저', '투어', '가이드', '관광지', '테마파크', '워터파크'],
+    allowedInterests: ['tourism', 'travel', 'leisure'],
+    penaltyLevel: 'strong',
+  },
+  // [NEW] 수산/해양 (강한 패널티)
+  fisheryMarine: {
+    keywords: ['수산', '어업', '양식', '수산물', '해양', '어선', '수협', '어촌', '해녀', '김', '미역', '전복',
+               '조개', '굴', '새우', '게', '낙지', '오징어', '멸치', '젓갈', '수산가공'],
+    allowedInterests: ['foodtech', 'bio', 'maritime'],
+    penaltyLevel: 'strong',
+  },
+  // [NEW] 지역특화산업/전통산업 (강한 패널티)
+  regionalTraditional: {
+    keywords: ['특산품', '향토', '전통주', '막걸리', '소주', '와인', '전통식품', '한식', '떡', '한과', '장류',
+               '고추장', '된장', '간장', '김치', '젓갈', '액젓', '장아찌', '지역산업', '향토산업',
+               '전통문화', '전통공예', '지역경제', '지역상생', '지역밀착'],
+    allowedInterests: ['foodtech', 'localBusiness'],
+    penaltyLevel: 'strong',
+  },
+  // [NEW] 소상공인/자영업 (일반 패널티)
+  smallBusiness: {
+    keywords: ['소상공인', '자영업', '골목상권', '상권', '점포', '매장운영', '소매', '도매', '유통업',
+               '편의점', '마트', '슈퍼', '세탁소', '빨래방', '문구점', '꽃집', '화원', '철물점',
+               '인테리어', '인테리어업', '창업점포'],
+    allowedInterests: ['retail', 'localBusiness'],
+    penaltyLevel: 'normal',
+  },
+  // [NEW] 운송/물류 오프라인 (일반 패널티)
+  logisticsOffline: {
+    keywords: ['화물', '운송업', '물류센터', '창고업', '택배', '퀵서비스', '용달', '이삿짐', '포워딩'],
+    allowedInterests: ['logistics', 'mobility'],
+    penaltyLevel: 'normal',
+  },
+  // [NEW] 사회적기업/협동조합 (일반 패널티 - 특수 형태)
+  socialEnterprise: {
+    keywords: ['사회적기업', '협동조합', '마을기업', '자활기업', '사회적경제', '취약계층', '장애인고용',
+               '노인일자리', '여성기업', '사회공헌'],
+    allowedInterests: ['socialImpact', 'nonprofit'],
+    penaltyLevel: 'normal',
+  },
+  // [NEW] 바이오/헬스케어 특화 (강한 패널티 - AI 키워드가 있어도 바이오 분야)
+  bioHealthcare: {
+    keywords: ['바이오', '헬스케어', '의료기기', '신약', '임상', '제약', '바이오텍', '생명공학', '유전자',
+               '세포', '줄기세포', '항체', '백신', '진단키트', '체외진단', '의약품', '건강기능식품',
+               '헬스케어 스타트업', '바이오 스타트업', '메디컬', '의료 AI'],
+    allowedInterests: ['bio', 'healthcare', 'medtech'],
+    penaltyLevel: 'strong',
+  },
+  // [NEW] 무역/수출 특화 (강한 패널티)
+  tradeExport: {
+    keywords: ['무역', '수출', '수입', '통관', '관세', '물류대행', '포워딩', '해외바이어', '바이어발굴',
+               '수출전문', '수출역량', '글로벌무역', '무역실무', '수출지원', '수출전사', '해외마케팅',
+               'FTA', '원산지', '무역금융'],
+    allowedInterests: ['trade', 'globalBusiness', 'export'],
+    penaltyLevel: 'strong',
+  },
+  // [NEW] 교육기관/운영사 모집 (강한 패널티 - 스타트업 대상 아님)
+  educationOperator: {
+    keywords: ['운영기관', '운영사 모집', '주관기관', '참여기관', '수행기관', '위탁기관', '교육기관',
+               '교육운영', '아카데미 운영', '프로그램 운영', '사업 운영기관', '컨소시엄 모집'],
+    allowedInterests: ['education', 'edutech', 'training'],
+    penaltyLevel: 'strong',
+  },
 }
 
 /**
@@ -1981,12 +2049,41 @@ const PRELIMINARY_STAGE_KEYWORDS = [
  * Industry Mismatch Penalty 완화 키워드
  * - 공고에 이 키워드가 명시적으로 포함되면 mismatch penalty를 완화
  * - AI/SW/디지털 서비스도 대상인 공고임을 나타냄
+ * [v2.1] 완화 조건 강화: 단순히 "디지털전환"이라는 단어가 있어도
+ *        명확히 업종 특화된 공고(관광, 수산, 지역특화 등)는 완화 제외
  */
 const PENALTY_MITIGATION_KEYWORDS = [
   'ai', '인공지능', '데이터', 'sw', '소프트웨어', '플랫폼', 'saas',
   '디지털', '디지털전환', 'ict', 'it', '콘텐츠', '앱', '어플',
   '온라인', '이커머스', '클라우드', '블록체인', '핀테크',
 ]
+
+/**
+ * 완화 무효화 키워드 (Mitigation Blocker)
+ * - 이 키워드들이 공고에 많이 포함되면 AI/디지털 키워드가 있어도 완화를 적용하지 않음
+ * - 업종 특화 공고임을 강하게 나타내는 핵심 키워드
+ */
+const MITIGATION_BLOCKER_KEYWORDS = [
+  // 관광/수산/농업 핵심 키워드 (이 키워드가 3개 이상 있으면 완화 무효)
+  '관광업', '숙박업', '수산업', '어업', '양식업', '농업', '축산업',
+  '지역특산', '향토', '전통산업', '지역상생', '골목상권',
+  // 명확한 오프라인 업종
+  '물류창고', '제조공장', '생산시설', '작업장', '장비지원',
+]
+
+/**
+ * 공고가 업종 특화 공고인지 강하게 판단
+ * - 블로커 키워드가 충분히 많으면 true
+ */
+function shouldBlockMitigation(text) {
+  const lowerText = text.toLowerCase()
+  const blockerCount = MITIGATION_BLOCKER_KEYWORDS.filter(kw =>
+    lowerText.includes(kw.toLowerCase())
+  ).length
+
+  // 블로커 키워드가 2개 이상이면 완화 무효화
+  return blockerCount >= 2
+}
 
 /**
  * 도메인 키워드 그룹 (matchedDomains 추출용)
@@ -2373,12 +2470,15 @@ export function calculateMatchingScore(profile, announcement) {
       fullSearchText.includes(kw.toLowerCase())
     )
 
+    // [v2.1] 완화 무효화 체크: 업종 특화 키워드가 많으면 완화 적용 안 함
+    const mitigationBlocked = shouldBlockMitigation(fullSearchText)
+
     let penalty = detectedPenaltyLevel === 'strong'
       ? INDUSTRY_MISMATCH_PENALTY_STRONG
       : INDUSTRY_MISMATCH_PENALTY_NORMAL
 
-    // 완화 적용: 패널티를 절반으로 줄임
-    if (hasMitigationKeyword) {
+    // 완화 적용: 패널티를 절반으로 줄임 (단, 블로커가 없을 때만)
+    if (hasMitigationKeyword && !mitigationBlocked) {
       penalty = Math.round(penalty / 2)
       breakdown.penaltyMitigated = true
     }
