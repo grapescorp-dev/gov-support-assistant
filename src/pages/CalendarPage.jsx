@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useProfileStore } from '../stores/useProfileStore'
+import { useProfileStore, INTERESTS } from '../stores/useProfileStore'
 import { useBookmarkStore } from '../stores/useBookmarkStore'
 import { useSearchStore } from '../stores/useSearchStore'
 import { mockAnnouncements } from '../data/mockAnnouncements'
@@ -25,7 +25,8 @@ import {
   Building2,
   Clock,
   TrendingUp,
-  X,
+  MapPin,
+  Coins,
   Sun,
   Moon,
   UserCircle,
@@ -44,7 +45,8 @@ const VIEWS = [
   { value: 'yearly', label: '연간' },
 ]
 
-const CATEGORIES = ['전체', 'AI', '음악', 'ICT', 'IT', 'CT', '콘텐츠', '창업']
+// SearchPage와 동일한 카테고리 필터 (INTERESTS 기반)
+const CATEGORIES = ['전체', ...INTERESTS.map(i => i.value)]
 
 export function CalendarPage() {
   const navigate = useNavigate()
@@ -132,15 +134,21 @@ export function CalendarPage() {
       return deadlineYear === year
     })
 
-    // 카테고리 필터 (개선된 매칭)
+    // 카테고리 필터 (INTERESTS 기반, SearchPage와 동일)
     if (selectedCategory !== '전체') {
+      const interest = INTERESTS.find(i => i.value === selectedCategory)
+      const keywords = interest?.keywords || [selectedCategory.toLowerCase()]
+
       filtered = filtered.filter((a) => {
-        const categories = a.category || []
-        return categories.some((cat) => {
-          const catLower = cat.toLowerCase()
-          const selectedLower = selectedCategory.toLowerCase()
-          return catLower === selectedLower || catLower.includes(selectedLower)
-        })
+        const searchText = [
+          a.title || '',
+          a.summary || '',
+          ...(a.category || []),
+          ...(a.tags || []),
+          ...(a.eligibility || []),
+        ].join(' ').toLowerCase()
+
+        return keywords.some(kw => searchText.includes(kw.toLowerCase()))
       })
     }
 
@@ -341,28 +349,53 @@ export function CalendarPage() {
               </button>
             </div>
 
-            {/* 분야 필터 */}
+            {/* 분야 필터 - SearchPage와 동일 */}
             <div className="mb-4">
               <label className={`block text-sm font-medium mb-2 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
                 분야
               </label>
-              <div className="flex flex-wrap gap-1.5">
-                {CATEGORIES.map((cat) => (
-                  <button
-                    key={cat}
-                    onClick={() => setSelectedCategory(cat)}
-                    className={`px-2.5 py-1 text-xs rounded-full transition-colors ${
-                      selectedCategory === cat
-                        ? 'bg-blue-600 text-white'
-                        : darkMode
-                        ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    }`}
-                  >
-                    {cat}
-                  </button>
-                ))}
-              </div>
+              {/* 전체 버튼 */}
+              <button
+                onClick={() => setSelectedCategory('전체')}
+                className={`w-full mb-2 px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                  selectedCategory === '전체'
+                    ? 'bg-blue-600 text-white'
+                    : darkMode
+                    ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                전체
+              </button>
+              {/* 그룹별 카테고리 */}
+              {['기술', '산업', '지원유형'].map(group => {
+                const groupInterests = INTERESTS.filter(i => i.group === group)
+                if (groupInterests.length === 0) return null
+                return (
+                  <div key={group} className="mb-2">
+                    <span className={`text-xs font-medium ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
+                      {group}
+                    </span>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {groupInterests.map((interest) => (
+                        <button
+                          key={interest.value}
+                          onClick={() => setSelectedCategory(interest.value)}
+                          className={`px-2 py-0.5 text-xs rounded-full transition-colors ${
+                            selectedCategory === interest.value
+                              ? 'bg-blue-600 text-white'
+                              : darkMode
+                              ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                          }`}
+                        >
+                          {interest.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
             </div>
 
             {/* 기관 필터 */}
@@ -528,8 +561,15 @@ function AnnouncementCard({ announcement, darkMode, isBookmarked, onBookmarkTogg
             {announcement.title}
           </h4>
 
-          {/* 기관 + 마감일 */}
-          <div className="flex items-center gap-3 text-sm">
+          {/* 요약 (SearchPage와 동일) */}
+          {announcement.summary && (
+            <p className={`text-sm mt-1 line-clamp-2 ${darkMode ? 'text-gray-400' : 'text-gray-600'}`}>
+              {announcement.summary}
+            </p>
+          )}
+
+          {/* 기관 + 마감일 + 지역 */}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm mt-2">
             <span className={`flex items-center gap-1 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
               <Building2 size={14} />
               {announcement.organization}
@@ -538,12 +578,21 @@ function AnnouncementCard({ announcement, darkMode, isBookmarked, onBookmarkTogg
               <Clock size={14} />
               {announcement.deadline}
             </span>
+            {announcement.regionRestriction?.type !== 'nationwide' && announcement.regionRestriction?.region && (
+              <span className={`flex items-center gap-1 ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                <MapPin size={14} />
+                {getRegionName(announcement.regionRestriction.region, announcement.regionRestriction.detectedCity)}
+              </span>
+            )}
           </div>
 
           {/* 지원금액 */}
-          <div className={`mt-2 text-sm font-medium ${darkMode ? 'text-blue-400' : 'text-blue-600'}`}>
-            {announcement.budget}
-          </div>
+          {announcement.budget && (
+            <div className={`flex items-center gap-1 mt-2 text-sm font-medium ${darkMode ? 'text-blue-400' : 'text-blue-600'}`}>
+              <Coins size={14} />
+              {announcement.budget}
+            </div>
+          )}
         </div>
 
         {/* 버튼 영역 */}

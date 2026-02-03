@@ -8,7 +8,15 @@ import { calculateMatchingScore, extractRegionRestriction, getRegionName, checkE
 import { getAnnouncementLink } from '../utils/getAnnouncementLink'
 import { stripHtml } from '../utils/stripHtml'
 import { CollapsibleTags } from '../components/CollapsibleTags'
-import { Search, Loader2, ExternalLink, Sparkles, Filter, Calendar, Building2, Tag, ArrowUpDown, UserCircle, TrendingUp, MapPin, AlertTriangle, Briefcase, CalendarDays, Info, FileText, AlertCircle, CheckCircle2, X, ChevronDown, Settings, Star, Clock, Eye } from 'lucide-react'
+import {
+  SEARCH_PAGE_HEADER,
+  PROFILE_WEAK_SIGNAL_BANNER,
+  SEARCH_RESULTS_COPY,
+  WHY_RECOMMENDED_COPY,
+  MISMATCH_HELP_COPY,
+  checkProfileSignalWeak,
+} from '../constants/microcopy'
+import { Search, Loader2, ExternalLink, Sparkles, Filter, Calendar, Building2, Tag, ArrowUpDown, UserCircle, TrendingUp, MapPin, AlertTriangle, Briefcase, CalendarDays, Info, FileText, AlertCircle, CheckCircle2, X, ChevronDown, Settings, Star, Clock, Eye, HelpCircle } from 'lucide-react'
 
 // 관심분야 카테고리 (INTERESTS에서 가져옴 - 프로필과 동일)
 const categories = ['전체', ...INTERESTS.map(i => i.value)]
@@ -413,8 +421,53 @@ export function SearchPage() {
     return badges.slice(0, 3) // 최대 3개
   }
 
+  // 프로필 신호 부족 여부 판단
+  const profileSignal = useMemo(() => {
+    return checkProfileSignalWeak(activeProfile)
+  }, [activeProfile])
+
+  // "왜 추천됐나요?" 토글 상태
+  const [showWhyRecommended, setShowWhyRecommended] = useState({})
+
+  const toggleWhyRecommended = (programId) => {
+    setShowWhyRecommended(prev => ({
+      ...prev,
+      [programId]: !prev[programId]
+    }))
+  }
+
   return (
     <div className="space-y-6">
+      {/* ========================================
+          [마이크로카피] 검색 페이지 상단 안내 (항상 표시)
+          ======================================== */}
+      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-4 rounded-xl border border-blue-100">
+        <h2 className="text-lg font-semibold text-gray-900 mb-1">{SEARCH_PAGE_HEADER.main}</h2>
+        <p className="text-sm text-gray-600">{SEARCH_PAGE_HEADER.sub}</p>
+        <p className="text-xs text-gray-500 mt-2">{SEARCH_PAGE_HEADER.info}</p>
+      </div>
+
+      {/* ========================================
+          [마이크로카피] 프로필 신호 부족 배너 (조건부)
+          ======================================== */}
+      {activeProfile && profileSignal.isWeak && (
+        <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl">
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={20} className="text-amber-500 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <h3 className="font-semibold text-amber-800">{PROFILE_WEAK_SIGNAL_BANNER.title}</h3>
+              <p className="text-sm text-amber-700 mt-1">{PROFILE_WEAK_SIGNAL_BANNER.body}</p>
+            </div>
+            <Link
+              to="/profile"
+              className="flex-shrink-0 bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-amber-600 transition-colors"
+            >
+              {PROFILE_WEAK_SIGNAL_BANNER.cta}
+            </Link>
+          </div>
+        </div>
+      )}
+
       {/* ========================================
           [UX 개선] 페이지 헤더 - 의사결정 단계 강조
           ======================================== */}
@@ -802,6 +855,12 @@ export function SearchPage() {
                     <span className="ml-auto text-sm font-medium text-green-600">{recommendedResults.length}건</span>
                   </div>
 
+                  {/* [마이크로카피] 추천 결과 리스트 상단 안내 */}
+                  <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
+                    <p className="text-sm text-gray-700">{SEARCH_RESULTS_COPY.main}</p>
+                    <p className="text-xs text-gray-500 mt-1">{SEARCH_RESULTS_COPY.sub}</p>
+                  </div>
+
                   <div className="space-y-3">
                     {recommendedResults.map((program) => {
                       const badges = getRecommendBadges(program)
@@ -895,6 +954,29 @@ export function SearchPage() {
                             </div>
                           )}
 
+                          {/* [마이크로카피] "왜 추천됐나요?" 토글 */}
+                          <div className="mt-2">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                toggleWhyRecommended(program.id)
+                              }}
+                              className="flex items-center gap-1 text-xs text-gray-500 hover:text-blue-600 transition-colors"
+                            >
+                              <HelpCircle size={12} />
+                              왜 추천됐나요?
+                              <ChevronDown size={12} className={`transition-transform ${showWhyRecommended[program.id] ? 'rotate-180' : ''}`} />
+                            </button>
+                            {showWhyRecommended[program.id] && (
+                              <div className="mt-2 p-2 bg-blue-50 rounded-lg text-xs text-gray-600">
+                                <p className="font-medium text-gray-700 mb-1">{WHY_RECOMMENDED_COPY.title}</p>
+                                {WHY_RECOMMENDED_COPY.reasons.map((reason, i) => (
+                                  <p key={i}>{reason}</p>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
                           {/* [UX 개선 #4] 행동 유도 버튼 */}
                           <div className="flex gap-2 pt-2 border-t border-gray-100">
                             <button
@@ -921,6 +1003,18 @@ export function SearchPage() {
                         </div>
                       )
                     })}
+                  </div>
+
+                  {/* [마이크로카피] 하단 안내 (맞지 않는 공고가 보일 때) */}
+                  <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                    <p className="text-sm text-gray-600">{MISMATCH_HELP_COPY.question}</p>
+                    <p className="text-xs text-gray-500 mt-1">{MISMATCH_HELP_COPY.suggestion}</p>
+                    <Link
+                      to="/profile"
+                      className="inline-flex items-center gap-1 mt-2 text-sm text-blue-600 hover:text-blue-700 font-medium"
+                    >
+                      {MISMATCH_HELP_COPY.cta}
+                    </Link>
                   </div>
                 </div>
               )}

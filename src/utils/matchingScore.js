@@ -356,10 +356,39 @@ export function getRegionName(regionCode, detectedCity) {
   return regionName
 }
 
+// 서울시 구 이름 -> 키워드 매핑 (useProfileStore의 SEOUL_DISTRICTS value와 일치)
+const SEOUL_DISTRICT_KEYWORDS = {
+  gangnam: ['강남', '강남구'],
+  gangdong: ['강동', '강동구'],
+  gangbuk: ['강북', '강북구'],
+  gangseo: ['강서', '강서구'],
+  gwanak: ['관악', '관악구'],
+  gwangjin: ['광진', '광진구'],
+  guro: ['구로', '구로구'],
+  geumcheon: ['금천', '금천구'],
+  nowon: ['노원', '노원구'],
+  dobong: ['도봉', '도봉구'],
+  dongdaemun: ['동대문', '동대문구'],
+  dongjak: ['동작', '동작구'],
+  mapo: ['마포', '마포구'],
+  seodaemun: ['서대문', '서대문구'],
+  seocho: ['서초', '서초구'],
+  seongdong: ['성동', '성동구'],
+  seongbuk: ['성북', '성북구'],
+  songpa: ['송파', '송파구'],
+  yangcheon: ['양천', '양천구'],
+  yeongdeungpo: ['영등포', '영등포구'],
+  yongsan: ['용산', '용산구'],
+  eunpyeong: ['은평', '은평구'],
+  jongno: ['종로', '종로구'],
+  jung: ['중구'],
+  jungnang: ['중랑', '중랑구'],
+}
+
 /**
  * 공고에서 지역 제한 정보 추출
  * @param {Object} announcement - 공고 객체
- * @returns {Object} { type: 'nationwide' | 'restricted' | 'unknown', region?: string, detectedCity?: string }
+ * @returns {Object} { type: 'nationwide' | 'restricted' | 'unknown', region?: string, detectedCity?: string, detectedDistrict?: string }
  */
 export function extractRegionRestriction(announcement) {
   // hashTags 제외 - 모든 지역이 나열되어 있어 신뢰도 낮음
@@ -387,10 +416,13 @@ export function extractRegionRestriction(announcement) {
   for (const [regionKey, regionData] of Object.entries(REGION_KEYWORDS)) {
     for (const kw of regionData.main) {
       if (titleText.includes(`[${kw}]`)) {
+        // 서울일 경우 구 단위 정보도 감지
+        const detectedDistrict = regionKey === 'seoul' ? detectSeoulDistrict(text) : undefined
         return {
           type: 'restricted',
           region: regionKey,
           detectedCity: undefined,
+          detectedDistrict,
         }
       }
     }
@@ -413,10 +445,13 @@ export function extractRegionRestriction(announcement) {
       ]
 
       if (specificPatterns.some((pattern) => text.includes(pattern))) {
+        // 서울일 경우 구 단위 정보도 감지
+        const detectedDistrict = regionKey === 'seoul' ? detectSeoulDistrict(text) : undefined
         return {
           type: 'restricted',
           region: regionKey,
           detectedCity: undefined,
+          detectedDistrict,
         }
       }
     }
@@ -463,10 +498,13 @@ export function extractRegionRestriction(announcement) {
       ]
 
       if (patterns.some((pattern) => text.includes(pattern))) {
+        // 서울일 경우 구 단위 정보도 감지
+        const detectedDistrict = regionKey === 'seoul' ? detectSeoulDistrict(text) : undefined
         return {
           type: 'restricted',
           region: regionKey,
           detectedCity: !regionData.main.includes(kw) ? kw : undefined,
+          detectedDistrict,
         }
       }
     }
@@ -480,16 +518,47 @@ export function extractRegionRestriction(announcement) {
 
     for (const kw of allKeywords) {
       if (orgText.includes(kw)) {
+        // 서울일 경우 구 단위 정보도 감지
+        const detectedDistrict = regionKey === 'seoul' ? detectSeoulDistrict(text) : undefined
         return {
           type: 'restricted',
           region: regionKey,
           detectedCity: !regionData.main.includes(kw) ? kw : undefined,
+          detectedDistrict,
         }
       }
     }
   }
 
   return { type: 'unknown' }
+}
+
+/**
+ * 텍스트에서 서울시 구 단위 정보 감지
+ * @param {string} text - 검색 대상 텍스트
+ * @returns {string|undefined} 감지된 구 코드 (예: 'gangnam') 또는 undefined
+ */
+function detectSeoulDistrict(text) {
+  const lowerText = text.toLowerCase()
+  for (const [districtKey, keywords] of Object.entries(SEOUL_DISTRICT_KEYWORDS)) {
+    for (const kw of keywords) {
+      // "강남구", "강남 지역", "강남구 소재" 등의 패턴 감지
+      const patterns = [
+        `${kw}구`,
+        `${kw} 지역`,
+        `${kw}구 소재`,
+        `${kw} 소재`,
+        `${kw}구 기업`,
+        `${kw}구 창업`,
+        `${kw}구청`,
+        `[${kw}]`, // 제목 패턴
+      ]
+      if (patterns.some((pattern) => lowerText.includes(pattern))) {
+        return districtKey
+      }
+    }
+  }
+  return undefined
 }
 
 // ==============================================
@@ -2100,7 +2169,7 @@ export function calculateMatchingScore(profile, announcement) {
   }
 
   // ============================================================
-  // 3. 지역 매칭 (최대 15점)
+  // 3. 지역 매칭 (최대 18점 - 서울 구 단위 보너스 포함)
   // ============================================================
   if (profile.region) {
     const regionRestriction = extractRegionRestriction(announcement)
@@ -2115,6 +2184,25 @@ export function calculateMatchingScore(profile, announcement) {
         // 지역 일치 - 높은 점수 (지역 맞춤 공고!)
         breakdown.regionScore = 15
         score += 15
+
+        // 서울 구 단위 매칭 보너스: 프로필에 subRegion이 있고, 공고에도 구 단위가 감지된 경우
+        if (
+          profile.region === 'seoul' &&
+          profile.subRegion &&
+          regionRestriction.detectedDistrict
+        ) {
+          if (profile.subRegion === regionRestriction.detectedDistrict) {
+            // 구 단위까지 일치 - 추가 보너스 (+3점)
+            breakdown.regionScore += 3
+            breakdown.districtMatch = true
+            score += 3
+          } else {
+            // 서울이지만 다른 구 - 소폭 감점 (-2점, 하지만 여전히 서울 범위이므로 기본 지역 점수 유지)
+            breakdown.regionScore -= 2
+            breakdown.districtMatch = false
+            score -= 2
+          }
+        }
       } else {
         // 지역 불일치 - 큰 감점 (지원 불가 가능성 높음)
         breakdown.regionScore = -20
@@ -2125,6 +2213,19 @@ export function calculateMatchingScore(profile, announcement) {
       if (profile.region === regionRestriction.region) {
         breakdown.regionScore = 12
         score += 12
+
+        // 서울 구 단위 매칭 보너스 (preferred 타입에도 적용)
+        if (
+          profile.region === 'seoul' &&
+          profile.subRegion &&
+          regionRestriction.detectedDistrict
+        ) {
+          if (profile.subRegion === regionRestriction.detectedDistrict) {
+            breakdown.regionScore += 2
+            breakdown.districtMatch = true
+            score += 2
+          }
+        }
       }
       // 다른 지역이면 점수 없음 (기본점수 제거)
     }

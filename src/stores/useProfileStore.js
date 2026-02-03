@@ -17,6 +17,7 @@ const createEmptyProfile = (name = '새 프로필') => ({
   companyType: '',
   businessAge: '',
   region: '',
+  subRegion: '', // 서울시 구 단위 (region이 'seoul'인 경우에만 사용)
 
   // 사업 규모
   revenue: '',
@@ -230,6 +231,36 @@ export const REGIONS = [
   { value: 'busan', label: '부산' },
   { value: 'ulsan', label: '울산' },
   { value: 'jeju', label: '제주' },
+]
+
+// 서울특별시 구 목록
+export const SEOUL_DISTRICTS = [
+  { value: '', label: '전체 (서울시)' },
+  { value: 'gangnam', label: '강남구' },
+  { value: 'gangdong', label: '강동구' },
+  { value: 'gangbuk', label: '강북구' },
+  { value: 'gangseo', label: '강서구' },
+  { value: 'gwanak', label: '관악구' },
+  { value: 'gwangjin', label: '광진구' },
+  { value: 'guro', label: '구로구' },
+  { value: 'geumcheon', label: '금천구' },
+  { value: 'nowon', label: '노원구' },
+  { value: 'dobong', label: '도봉구' },
+  { value: 'dongdaemun', label: '동대문구' },
+  { value: 'dongjak', label: '동작구' },
+  { value: 'mapo', label: '마포구' },
+  { value: 'seodaemun', label: '서대문구' },
+  { value: 'seocho', label: '서초구' },
+  { value: 'seongdong', label: '성동구' },
+  { value: 'seongbuk', label: '성북구' },
+  { value: 'songpa', label: '송파구' },
+  { value: 'yangcheon', label: '양천구' },
+  { value: 'yeongdeungpo', label: '영등포구' },
+  { value: 'yongsan', label: '용산구' },
+  { value: 'eunpyeong', label: '은평구' },
+  { value: 'jongno', label: '종로구' },
+  { value: 'jung', label: '중구' },
+  { value: 'jungnang', label: '중랑구' },
 ]
 
 export const REVENUES = [
