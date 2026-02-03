@@ -123,6 +123,16 @@ export function SearchPage() {
       const hardFilterResult = eligibilityResult.hardFilterResult
       const hardPass = hardFilterResult?.hardPass // true, false, or null (unknown)
 
+      // 디버그: 첫 5개 공고의 Hard Filter 결과 로깅
+      if (program.id && results.indexOf(program) < 5) {
+        console.log(`[HardFilter] ${program.title?.substring(0, 30)}...`, {
+          hardPass,
+          eligible: eligibilityResult.eligible,
+          failReasons: hardFilterResult?.hardFailReasons?.map(r => r.label),
+          unknownReasons: hardFilterResult?.hardUnknownReasons?.map(r => r.label),
+        })
+      }
+
       return {
         ...program,
         matchingScore: calculateMatchingScore(activeProfile, program),
@@ -228,12 +238,13 @@ export function SearchPage() {
     setSelectedProgram(null)
     setAiAnalysis(null)
 
-    console.log('[SearchPage] 검색 시작:', { keyword, initial })
+    console.log('[SearchPage] 검색 시작:', { keyword, initial, hasProfile: !!activeProfile })
 
     try {
       // API는 키워드만으로 검색, 카테고리는 클라이언트에서 필터링
       const data = await searchAnnouncements(keyword, {})
       console.log('[SearchPage] API 검색 결과:', data.length, '건')
+      console.log('[SearchPage] 프로필 상태:', activeProfile ? '있음' : '없음')
       setResults(data)
     } catch (error) {
       console.error('[SearchPage] 검색 오류:', error)
