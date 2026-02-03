@@ -1909,6 +1909,32 @@ const PRELIMINARY_STAGE_KEYWORDS = [
 ]
 
 /**
+ * Industry Mismatch Penalty 완화 키워드
+ * - 공고에 이 키워드가 명시적으로 포함되면 mismatch penalty를 완화
+ * - AI/SW/디지털 서비스도 대상인 공고임을 나타냄
+ */
+const PENALTY_MITIGATION_KEYWORDS = [
+  'ai', '인공지능', '데이터', 'sw', '소프트웨어', '플랫폼', 'saas',
+  '디지털', '디지털전환', 'ict', 'it', '콘텐츠', '앱', '어플',
+  '온라인', '이커머스', '클라우드', '블록체인', '핀테크',
+]
+
+/**
+ * 도메인 키워드 그룹 (matchedDomains 추출용)
+ */
+const DOMAIN_KEYWORDS = {
+  ai: ['ai', '인공지능', '머신러닝', '딥러닝', 'llm', 'gpt', 'chatgpt'],
+  saas: ['saas', '구독', '클라우드', '서비스형'],
+  data: ['데이터', '빅데이터', '데이터분석', '데이터플랫폼'],
+  ict: ['ict', 'it', '정보통신', '소프트웨어', 'sw'],
+  content: ['콘텐츠', '미디어', '영상', '음악', '게임', '웹툰'],
+  fintech: ['핀테크', '금융', '블록체인', '암호화폐', '결제'],
+  bio: ['바이오', '헬스케어', '의료', '건강'],
+  manufacturing: ['제조', '생산', '공장', '스마트팩토리'],
+  foodtech: ['푸드테크', '식품', '음식'],
+}
+
+/**
  * 프로필 텍스트에서 업종 신호가 있는지 확인
  * @param {Object} profile - 프로필
  * @param {string[]} industryKeywords - 업종 키워드 목록
@@ -1964,6 +1990,9 @@ export function calculateMatchingScore(profile, announcement) {
     relevanceGateApplied: false,
     industryMismatchPenalty: 0,
     industryMismatchType: null, // 'strong' | 'normal' | null
+    industryMismatchGroup: null, // 감지된 업종 그룹명
+    penaltyMitigated: false, // AI/SW 키워드로 패널티 완화 여부
+    matchedDomains: [], // 프로필과 매칭된 도메인 목록
     stageBoost: 0,
     stageBoostApplied: false,
   }
@@ -2202,9 +2231,11 @@ export function calculateMatchingScore(profile, announcement) {
   // 7. Industry Mismatch Soft Penalty (업종 불일치 감점)
   // - 공고에 업종 특화 키워드가 있고, 프로필에 해당 업종 신호가 없으면 패널티
   // - penaltyLevel에 따라 강도 조절 (strong: -35, normal: -25)
+  // - 단, 공고에 AI/SW/디지털 키워드가 있으면 패널티 완화
   // ============================================================
   let industryMismatchDetected = false
   let detectedPenaltyLevel = null
+  let detectedMismatchGroup = null
 
   for (const [industryType, config] of Object.entries(INDUSTRY_SPECIFIC_KEYWORDS)) {
     // 공고에 해당 업종 키워드가 있는지 확인
@@ -2222,6 +2253,7 @@ export function calculateMatchingScore(profile, announcement) {
       // 둘 다 없으면 mismatch
       if (!hasAllowedInt && !hasSignalInProfile) {
         industryMismatchDetected = true
+        detectedMismatchGroup = industryType
         // 가장 강한 패널티 레벨 유지
         if (config.penaltyLevel === 'strong') {
           detectedPenaltyLevel = 'strong'
@@ -2235,13 +2267,48 @@ export function calculateMatchingScore(profile, announcement) {
   }
 
   if (industryMismatchDetected) {
-    const penalty = detectedPenaltyLevel === 'strong'
+    // 패널티 완화 체크: 공고에 AI/SW/디지털 키워드가 있으면 패널티 감소
+    const hasMitigationKeyword = PENALTY_MITIGATION_KEYWORDS.some(kw =>
+      fullSearchText.includes(kw.toLowerCase())
+    )
+
+    let penalty = detectedPenaltyLevel === 'strong'
       ? INDUSTRY_MISMATCH_PENALTY_STRONG
       : INDUSTRY_MISMATCH_PENALTY_NORMAL
+
+    // 완화 적용: 패널티를 절반으로 줄임
+    if (hasMitigationKeyword) {
+      penalty = Math.round(penalty / 2)
+      breakdown.penaltyMitigated = true
+    }
+
     breakdown.industryMismatchPenalty = penalty
     breakdown.industryMismatchType = detectedPenaltyLevel
+    breakdown.industryMismatchGroup = detectedMismatchGroup
     score += penalty
   }
+
+  // ============================================================
+  // 7-1. matchedDomains 추출 (디버그/설명용)
+  // - 프로필의 interests와 공고에서 매칭된 도메인 목록
+  // ============================================================
+  const matchedDomains = []
+  for (const [domain, keywords] of Object.entries(DOMAIN_KEYWORDS)) {
+    const domainMatched = keywords.some(kw => fullSearchText.includes(kw.toLowerCase()))
+    const profileHasDomain = profile.interests?.includes(domain) ||
+      keywords.some(kw => {
+        const profileText = [
+          profile.serviceName || '',
+          profile.businessOverview || '',
+        ].join(' ').toLowerCase()
+        return profileText.includes(kw.toLowerCase())
+      })
+
+    if (domainMatched && profileHasDomain) {
+      matchedDomains.push(domain)
+    }
+  }
+  breakdown.matchedDomains = matchedDomains
 
   // ============================================================
   // 8. Stage Boost (예비창업자 단계 가점)

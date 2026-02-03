@@ -1,5 +1,5 @@
 /**
- * Matching Score 테스트 (Relevance Gate, Industry Mismatch, Stage Boost)
+ * Matching Score 테스트 (Relevance Gate, Industry Mismatch, Stage Boost, Penalty Mitigation)
  *
  * 실행: node test-matching-score.mjs
  */
@@ -58,7 +58,26 @@ const PRELIMINARY_STAGE_KEYWORDS = [
   '데모데이', '데모 데이', 'ir', '투자유치',
 ]
 
-// INTERESTS 정의 (간소화)
+// 패널티 완화 키워드
+const PENALTY_MITIGATION_KEYWORDS = [
+  'ai', '인공지능', '데이터', 'sw', '소프트웨어', '플랫폼', 'saas',
+  '디지털', '디지털전환', 'ict', 'it', '콘텐츠', '앱', '어플',
+  '온라인', '이커머스', '클라우드', '블록체인', '핀테크',
+]
+
+// 도메인 키워드 그룹
+const DOMAIN_KEYWORDS = {
+  ai: ['ai', '인공지능', '머신러닝', '딥러닝', 'llm', 'gpt'],
+  saas: ['saas', '구독', '클라우드', '서비스형'],
+  data: ['데이터', '빅데이터', '데이터분석'],
+  ict: ['ict', 'it', '정보통신', '소프트웨어', 'sw'],
+  content: ['콘텐츠', '미디어', '영상', '음악', '게임', '웹툰'],
+  fintech: ['핀테크', '금융', '블록체인'],
+  bio: ['바이오', '헬스케어', '의료', '건강'],
+  manufacturing: ['제조', '생산', '공장', '스마트팩토리'],
+}
+
+// INTERESTS 정의
 const INTERESTS = [
   { value: 'ai', keywords: ['ai', '인공지능', '머신러닝', '딥러닝', 'gpt', 'llm'] },
   { value: 'iot', keywords: ['iot', '사물인터넷', '센서', '스마트', '웨어러블'] },
@@ -100,7 +119,7 @@ function extractKeywordsFromProfile(profile) {
   return keywords
 }
 
-// 간소화된 calculateMatchingScore
+// calculateMatchingScore (인라인 구현)
 function calculateMatchingScore(profile, announcement) {
   if (!profile || !announcement) return { score: 0, breakdown: {} }
 
@@ -113,6 +132,9 @@ function calculateMatchingScore(profile, announcement) {
     regionScore: 0,
     industryMismatchPenalty: 0,
     industryMismatchType: null,
+    industryMismatchGroup: null,
+    penaltyMitigated: false,
+    matchedDomains: [],
     stageBoost: 0,
     stageBoostApplied: false,
     relevanceGateApplied: false,
@@ -194,9 +216,10 @@ function calculateMatchingScore(profile, announcement) {
     }
   }
 
-  // 5. Industry Mismatch Soft Penalty
+  // 5. Industry Mismatch Soft Penalty (패널티 완화 로직 포함)
   let industryMismatchDetected = false
   let detectedPenaltyLevel = null
+  let detectedMismatchGroup = null
 
   for (const [industryType, config] of Object.entries(INDUSTRY_SPECIFIC_KEYWORDS)) {
     const hasIndustryKeywordInAnnouncement = config.keywords.some(kw =>
@@ -209,6 +232,7 @@ function calculateMatchingScore(profile, announcement) {
 
       if (!hasAllowedInt && !hasSignalInProfile) {
         industryMismatchDetected = true
+        detectedMismatchGroup = industryType
         if (config.penaltyLevel === 'strong') {
           detectedPenaltyLevel = 'strong'
         } else if (detectedPenaltyLevel !== 'strong') {
@@ -220,13 +244,45 @@ function calculateMatchingScore(profile, announcement) {
   }
 
   if (industryMismatchDetected) {
-    const penalty = detectedPenaltyLevel === 'strong'
+    // 패널티 완화 체크: 공고에 AI/SW/디지털 키워드가 있으면 패널티 감소
+    const hasMitigationKeyword = PENALTY_MITIGATION_KEYWORDS.some(kw =>
+      fullSearchText.includes(kw.toLowerCase())
+    )
+
+    let penalty = detectedPenaltyLevel === 'strong'
       ? INDUSTRY_MISMATCH_PENALTY_STRONG
       : INDUSTRY_MISMATCH_PENALTY_NORMAL
+
+    // 완화 적용: 패널티를 절반으로 줄임
+    if (hasMitigationKeyword) {
+      penalty = Math.round(penalty / 2)
+      breakdown.penaltyMitigated = true
+    }
+
     breakdown.industryMismatchPenalty = penalty
     breakdown.industryMismatchType = detectedPenaltyLevel
+    breakdown.industryMismatchGroup = detectedMismatchGroup
     score += penalty
   }
+
+  // 5-1. matchedDomains 추출
+  const matchedDomains = []
+  for (const [domain, keywords] of Object.entries(DOMAIN_KEYWORDS)) {
+    const domainMatched = keywords.some(kw => fullSearchText.includes(kw.toLowerCase()))
+    const profileHasDomain = profile.interests?.includes(domain) ||
+      keywords.some(kw => {
+        const profileText = [
+          profile.serviceName || '',
+          profile.businessOverview || '',
+        ].join(' ').toLowerCase()
+        return profileText.includes(kw.toLowerCase())
+      })
+
+    if (domainMatched && profileHasDomain) {
+      matchedDomains.push(domain)
+    }
+  }
+  breakdown.matchedDomains = matchedDomains
 
   // 6. Stage Boost (예비창업자)
   if (profile.businessAge === 'preliminary' || profile.companyType === 'preliminary') {
@@ -267,7 +323,7 @@ const profiles = {
     serviceName: '운동 후 스트레칭 리커버리 습관 형성 앱',
     businessOverview: '운동 후 스트레칭과 리커버리 루틴을 추천하고 습관화를 돕는 모바일 앱 서비스입니다.',
   },
-  // AI 스타트업 (기존)
+  // AI 음악/SaaS 스타트업
   aiMusicStartup: {
     companyType: 'sme',
     businessAge: '1to3',
@@ -276,7 +332,7 @@ const profiles = {
     serviceName: 'AI 기반 음악 추천 플랫폼',
     businessOverview: 'AI를 활용하여 사용자 취향에 맞는 음악을 추천하고 생성하는 SaaS 서비스입니다.',
   },
-  // 가죽 제조업체 (기존)
+  // 가죽 제조업체
   leatherManufacturer: {
     companyType: 'sole',
     businessAge: '3to7',
@@ -285,7 +341,7 @@ const profiles = {
     serviceName: '가죽 패션 액세서리 제조',
     businessOverview: '수공예 가죽 가방 및 액세서리를 제조합니다.',
   },
-  // 핀테크 스타트업 (기존)
+  // 핀테크 스타트업
   fintechStartup: {
     companyType: 'sme',
     businessAge: '1to3',
@@ -303,7 +359,7 @@ const profiles = {
 const testCases = [
   // ========== 예비창업자 헬스케어 앱 시나리오 ==========
   {
-    name: '[오탐방지] 헬스케어 앱 예비창업자 + 제조/시설/장비 공고 => 낮은 점수',
+    name: '[오탐방지] 헬스케어 앱 + 제조/시설/장비 공고 => 낮은 점수',
     profile: profiles.healthcareAppPreliminary,
     announcement: {
       title: '소공인 제조장비 임대 지원',
@@ -313,16 +369,16 @@ const testCases = [
     },
     validate: (result) => {
       if (result.score > 30) {
-        return { pass: false, reason: `점수 ${result.score} > 30 (제조/시설 공고인데 헬스케어 앱에 높은 점수)` }
+        return { pass: false, reason: `점수 ${result.score} > 30 (제조/시설 공고인데 높은 점수)` }
       }
       if (result.breakdown.industryMismatchType !== 'strong') {
-        return { pass: false, reason: `Industry Mismatch가 'strong'이 아님: ${result.breakdown.industryMismatchType}` }
+        return { pass: false, reason: `Industry Mismatch가 'strong'이 아님` }
       }
       return { pass: true }
     },
   },
   {
-    name: '[오탐방지] 헬스케어 앱 예비창업자 + 입주공간 공고 => 낮은 점수',
+    name: '[오탐방지] 헬스케어 앱 + 입주공간 공고 => 낮은 점수',
     profile: profiles.healthcareAppPreliminary,
     announcement: {
       title: '창업공간 입주기업 모집',
@@ -331,15 +387,14 @@ const testCases = [
       category: ['공간지원', '입주'],
     },
     validate: (result) => {
-      // 예비창업자 키워드로 Stage Boost가 적용되더라도 시설/공간 패널티로 상쇄
       if (result.score > 40) {
-        return { pass: false, reason: `점수 ${result.score} > 40 (공간/입주 공고인데 디지털 서비스에 높은 점수)` }
+        return { pass: false, reason: `점수 ${result.score} > 40 (공간/입주 공고인데 높은 점수)` }
       }
       return { pass: true }
     },
   },
   {
-    name: '[정탐] 헬스케어 앱 예비창업자 + 헬스/바이오 사업화 공고 => 높은 점수',
+    name: '[정탐] 헬스케어 앱 + 바이오헬스 사업화 공고 => 높은 점수 + matchedDomains',
     profile: profiles.healthcareAppPreliminary,
     announcement: {
       title: '바이오헬스 예비창업자 사업화 지원',
@@ -355,11 +410,14 @@ const testCases = [
       if (!result.breakdown.stageBoostApplied) {
         return { pass: false, reason: `Stage Boost가 적용되지 않음` }
       }
+      if (!result.breakdown.matchedDomains.includes('bio')) {
+        return { pass: false, reason: `matchedDomains에 'bio' 없음: ${result.breakdown.matchedDomains}` }
+      }
       return { pass: true }
     },
   },
   {
-    name: '[정탐] 헬스케어 앱 예비창업자 + 창업교육/멘토링 공고 => Stage Boost 적용',
+    name: '[정탐] 헬스케어 앱 + 창업교육/멘토링 공고 => Stage Boost 적용',
     profile: profiles.healthcareAppPreliminary,
     announcement: {
       title: '예비창업자 창업교육 및 멘토링',
@@ -369,7 +427,6 @@ const testCases = [
       tags: ['디지털', 'IT', '서비스'],
     },
     validate: (result) => {
-      // Stage Boost(12) + 기업형태(15) = 27점 (범용 교육 공고라서 도메인 매칭 낮음)
       if (result.score < 25) {
         return { pass: false, reason: `점수 ${result.score} < 25 (예비창업자 공고인데 점수 낮음)` }
       }
@@ -380,9 +437,9 @@ const testCases = [
     },
   },
 
-  // ========== 기존 테스트 케이스 (유지) ==========
+  // ========== AI/SaaS 스타트업 시나리오 ==========
   {
-    name: '[기존] AI 스타트업 + 가죽패션 소공인 공고 => 점수 상한',
+    name: '[오탐방지] AI 스타트업 + 가죽패션 소공인 공고 => 낮은 점수',
     profile: profiles.aiMusicStartup,
     announcement: {
       title: '가죽패션 소공인 장비 임대지원',
@@ -394,11 +451,36 @@ const testCases = [
       if (result.score > 20) {
         return { pass: false, reason: `점수 ${result.score} > 20 (Industry Penalty 미적용)` }
       }
+      if (result.breakdown.industryMismatchGroup !== 'traditionalManufacturing') {
+        return { pass: false, reason: `Mismatch 그룹이 틀림: ${result.breakdown.industryMismatchGroup}` }
+      }
       return { pass: true }
     },
   },
   {
-    name: '[기존] 가죽 제조업체 + 가죽패션 공고 => 높은 점수',
+    name: '[NEW] 패널티 완화: AI 스타트업 + 제조+디지털전환 공고 => 패널티 절반',
+    profile: profiles.aiMusicStartup,
+    announcement: {
+      title: '중소 제조기업 디지털전환 지원',
+      summary: '제조 공장의 AI 및 소프트웨어 기반 디지털전환 지원사업',
+      eligibility: ['서울 소재 중소기업'],
+      category: ['제조', '디지털전환', 'AI'],
+    },
+    validate: (result) => {
+      // 제조 키워드가 있지만, AI/디지털전환 키워드도 있어서 패널티 완화
+      if (!result.breakdown.penaltyMitigated) {
+        return { pass: false, reason: `패널티 완화가 적용되지 않음` }
+      }
+      // 완화된 패널티: -35 → -17 또는 -18 (Math.round(-35/2) = -17)
+      const expectedPenalty = Math.round(INDUSTRY_MISMATCH_PENALTY_STRONG / 2)
+      if (result.breakdown.industryMismatchPenalty !== expectedPenalty) {
+        return { pass: false, reason: `완화된 패널티가 ${expectedPenalty}이 아님: ${result.breakdown.industryMismatchPenalty}` }
+      }
+      return { pass: true }
+    },
+  },
+  {
+    name: '[정탐] 가죽 제조업체 + 가죽패션 공고 => 높은 점수',
     profile: profiles.leatherManufacturer,
     announcement: {
       title: '가죽패션 소공인 장비 임대지원',
@@ -410,11 +492,15 @@ const testCases = [
       if (result.score < 30) {
         return { pass: false, reason: `점수 ${result.score} < 30 (업종 일치인데 점수 낮음)` }
       }
+      // 업종 일치이므로 mismatch 없어야 함
+      if (result.breakdown.industryMismatchPenalty !== 0) {
+        return { pass: false, reason: `업종 일치인데 패널티 적용됨: ${result.breakdown.industryMismatchPenalty}` }
+      }
       return { pass: true }
     },
   },
   {
-    name: '[기존] AI 스타트업 + AI 지원사업 => 높은 점수',
+    name: '[정탐] AI 스타트업 + AI 지원사업 => 높은 점수 + matchedDomains',
     profile: profiles.aiMusicStartup,
     announcement: {
       title: 'AI 스타트업 기술개발 지원',
@@ -427,11 +513,14 @@ const testCases = [
       if (result.score < 50) {
         return { pass: false, reason: `점수 ${result.score} < 50 (관심분야 일치인데 점수 낮음)` }
       }
+      if (!result.breakdown.matchedDomains.includes('ai')) {
+        return { pass: false, reason: `matchedDomains에 'ai' 없음` }
+      }
       return { pass: true }
     },
   },
   {
-    name: '[기존] 범용 공고 (R&D 바우처) => Industry Penalty 없음',
+    name: '[정탐] 범용 공고 (R&D 바우처) => Industry Penalty 없음',
     profile: profiles.aiMusicStartup,
     announcement: {
       title: '중소기업 R&D 바우처 지원',
@@ -452,9 +541,9 @@ const testCases = [
 // 테스트 실행
 // ============================================================
 
-console.log('='.repeat(60))
-console.log('Matching Score 테스트 (Relevance Gate, Industry Mismatch, Stage Boost)')
-console.log('='.repeat(60))
+console.log('='.repeat(70))
+console.log('Matching Score 테스트 (Relevance Gate, Industry Mismatch, Penalty Mitigation)')
+console.log('='.repeat(70))
 
 let passed = 0
 let failed = 0
@@ -465,7 +554,9 @@ for (const tc of testCases) {
 
   if (validation.pass) {
     console.log(`✅ PASS: ${tc.name}`)
-    console.log(`   Score: ${result.score}, interest=${result.breakdown.interestScore.toFixed(1)}, keyword=${result.breakdown.keywordScore}, companyType=${result.breakdown.companyTypeScore}, region=${result.breakdown.regionScore}, industryPenalty=${result.breakdown.industryMismatchPenalty}(${result.breakdown.industryMismatchType || 'none'}), stageBoost=${result.breakdown.stageBoost}(${result.breakdown.stageBoostApplied}), gateApplied=${result.breakdown.relevanceGateApplied}`)
+    console.log(`   Score: ${result.score}, interest=${result.breakdown.interestScore.toFixed(1)}, keyword=${result.breakdown.keywordScore}, region=${result.breakdown.regionScore}`)
+    console.log(`   Penalty: ${result.breakdown.industryMismatchPenalty}(${result.breakdown.industryMismatchGroup || 'none'}, mitigated=${result.breakdown.penaltyMitigated}), stageBoost=${result.breakdown.stageBoost}`)
+    console.log(`   matchedDomains: [${result.breakdown.matchedDomains.join(', ')}], gateApplied=${result.breakdown.relevanceGateApplied}`)
     passed++
   } else {
     console.log(`❌ FAIL: ${tc.name}`)
@@ -476,8 +567,8 @@ for (const tc of testCases) {
   }
 }
 
-console.log('\n' + '='.repeat(60))
+console.log('\n' + '='.repeat(70))
 console.log(`총 ${testCases.length}개 테스트: ${passed} 통과, ${failed} 실패`)
-console.log('='.repeat(60))
+console.log('='.repeat(70))
 
 process.exit(failed > 0 ? 1 : 0)
