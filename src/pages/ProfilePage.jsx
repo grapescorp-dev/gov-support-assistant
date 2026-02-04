@@ -10,6 +10,7 @@ import {
   CERTIFICATIONS,
   INVESTMENT_STAGES,
   INTERESTS,
+  EXCLUDED_INTEREST_OPTIONS,
 } from '../stores/useProfileStore'
 import { useToastStore } from '../stores/useToastStore'
 import {
@@ -226,8 +227,8 @@ function RecommendationQualityIndicator({ quality, reasons }) {
   )
 }
 
-// 핵심 도메인 선택 컴포넌트 (최대 2개 제한)
-function CoreDomainSelector({ label, options, selectedValues = [], onToggle, maxCount = 2 }) {
+// 핵심 도메인 선택 컴포넌트 (복수 선택 가능)
+function CoreDomainSelector({ label, options, selectedValues = [], onToggle }) {
   // 그룹별로 분류
   const groupedOptions = options.reduce((acc, opt) => {
     if (!acc[opt.group]) acc[opt.group] = []
@@ -235,16 +236,16 @@ function CoreDomainSelector({ label, options, selectedValues = [], onToggle, max
     return acc
   }, {})
 
-  const isMaxReached = selectedValues.filter(v =>
+  const selectedCount = selectedValues.filter(v =>
     options.some(o => o.value === v)
-  ).length >= maxCount
+  ).length
 
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
         <label className="block text-sm font-medium text-gray-700">{label}</label>
         <span className="text-xs text-gray-500">
-          {selectedValues.filter(v => options.some(o => o.value === v)).length}/{maxCount} 선택
+          {selectedCount}개 선택됨
         </span>
       </div>
 
@@ -254,18 +255,14 @@ function CoreDomainSelector({ label, options, selectedValues = [], onToggle, max
           <div className="flex flex-wrap gap-2">
             {groupOpts.map((opt) => {
               const isSelected = selectedValues.includes(opt.value)
-              const isDisabled = !isSelected && isMaxReached
               return (
                 <button
                   key={opt.value}
                   type="button"
-                  onClick={() => !isDisabled && onToggle(opt.value)}
-                  disabled={isDisabled}
+                  onClick={() => onToggle(opt.value)}
                   className={`px-3 py-2 rounded-lg text-sm font-medium transition-all border ${
                     isSelected
                       ? 'bg-blue-600 text-white border-blue-600'
-                      : isDisabled
-                      ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
                       : 'bg-white text-gray-700 border-gray-300 hover:border-blue-400'
                   }`}
                 >
@@ -473,6 +470,7 @@ export function ProfilePage() {
     setActiveProfile,
     toggleCertification,
     toggleInterest,
+    toggleExcludedInterest,
   } = useProfileStore()
 
   const { success, error } = useToastStore()
@@ -516,7 +514,7 @@ export function ProfilePage() {
       score += 3
     } else if (coreCount === 1) {
       score += 2
-      reasons.push('핵심 도메인 1개 더 선택하면 추천 정확도가 올라갑니다')
+      reasons.push('핵심 도메인을 추가로 선택하면 추천 정확도가 올라갑니다')
     } else {
       reasons.push('핵심 도메인을 선택해주세요')
     }
@@ -693,7 +691,7 @@ export function ProfilePage() {
             <SectionHeader
               icon={Target}
               title="핵심 도메인"
-              description="가장 중요! 사업의 주요 분야를 선택하세요 (최대 2개)"
+              description="가장 중요! 사업의 주요 분야를 선택하세요 (복수 선택 가능)"
             />
 
             {/* [마이크로카피] 관심분야 안내 */}
@@ -709,7 +707,6 @@ export function ProfilePage() {
               options={CORE_INTERESTS}
               selectedValues={activeProfile.interests || []}
               onToggle={toggleInterest}
-              maxCount={2}
             />
 
             {/* [마이크로카피] 관심분야 비어있을 때 경고 */}
@@ -740,35 +737,6 @@ export function ProfilePage() {
                   placeholder="예: AI 기반 헬스케어 플랫폼"
                   className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
-                <p className="mt-1 text-xs text-gray-500">{SERVICE_NAME_COPY.tip}</p>
-                <p className="text-xs text-gray-400">{SERVICE_NAME_COPY.examples}</p>
-
-                {/* [마이크로카피] 서비스명 키워드 상태 표시 */}
-                {(() => {
-                  const keywordCount = countDomainKeywords(activeProfile.serviceName || '')
-                  if (keywordCount === 0) {
-                    return (
-                      <p className="mt-2 text-xs text-amber-600 flex items-center gap-1">
-                        <AlertCircle size={12} />
-                        {SERVICE_NAME_COPY.status.zero}
-                      </p>
-                    )
-                  } else if (keywordCount <= 2) {
-                    return (
-                      <p className="mt-2 text-xs text-blue-600 flex items-center gap-1">
-                        <Lightbulb size={12} />
-                        {SERVICE_NAME_COPY.status.low}
-                      </p>
-                    )
-                  } else {
-                    return (
-                      <p className="mt-2 text-xs text-green-600 flex items-center gap-1">
-                        <Check size={12} />
-                        {SERVICE_NAME_COPY.status.good}
-                      </p>
-                    )
-                  }
-                })()}
               </div>
 
               {/* [마이크로카피] 사업 개요 */}
@@ -953,6 +921,48 @@ export function ProfilePage() {
               selectedValues={activeProfile.interests || []}
               onToggle={toggleInterest}
             />
+          </section>
+
+          {/* 섹션 7: 제외 관심 분야 */}
+          <section className="bg-white rounded-xl p-6 border border-gray-200">
+            <SectionHeader
+              icon={X}
+              title="제외 관심 분야"
+              description="추천에서 제외할 분야를 선택하세요 (선택된 분야의 공고는 추천 목록에서 제외됩니다)"
+            />
+            <div className="bg-amber-50 border border-amber-200 p-3 rounded-lg mb-4">
+              <p className="text-sm text-amber-700">
+                <strong>팁:</strong> 사업과 명확히 관련 없는 분야를 선택하면 더 정확한 추천을 받을 수 있습니다.
+                예를 들어, IT 서비스 기업이라면 농업/축산, 수산/어업, 건설/건축 등을 제외할 수 있습니다.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {EXCLUDED_INTEREST_OPTIONS.map((option) => {
+                const isSelected = (activeProfile.excludedInterests || []).includes(option.value)
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => toggleExcludedInterest(option.value)}
+                    className={`px-3 py-2 rounded-lg text-sm font-medium border transition-all ${
+                      isSelected
+                        ? 'bg-red-100 border-red-300 text-red-700'
+                        : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">
+                      {isSelected && <X size={14} />}
+                      {option.label}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+            {(activeProfile.excludedInterests || []).length > 0 && (
+              <p className="text-xs text-gray-500 mt-3">
+                {(activeProfile.excludedInterests || []).length}개 분야 제외 중 - 해당 분야 공고는 추천 목록에 표시되지 않습니다.
+              </p>
+            )}
           </section>
 
           {/* 저장 버튼 */}

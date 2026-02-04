@@ -29,6 +29,9 @@ const createEmptyProfile = (name = '새 프로필') => ({
 
   // 관심 분야
   interests: [],
+
+  // 제외 관심 분야 (이 분야의 공고는 추천에서 제외)
+  excludedInterests: [],
 })
 
 export const useProfileStore = create(
@@ -153,6 +156,28 @@ export const useProfileStore = create(
             profiles: state.profiles.map((p) =>
               p.id === state.activeProfileId
                 ? { ...p, interests: newInterests, updatedAt: new Date().toISOString() }
+                : p
+            ),
+          }
+        }),
+
+      // 제외 관심분야 토글 (활성 프로필)
+      toggleExcludedInterest: (interest) =>
+        set((state) => {
+          const activeProfile = state.profiles.find(
+            (p) => p.id === state.activeProfileId
+          )
+          if (!activeProfile) return state
+
+          const excludedInterests = activeProfile.excludedInterests || []
+          const newExcludedInterests = excludedInterests.includes(interest)
+            ? excludedInterests.filter((i) => i !== interest)
+            : [...excludedInterests, interest]
+
+          return {
+            profiles: state.profiles.map((p) =>
+              p.id === state.activeProfileId
+                ? { ...p, excludedInterests: newExcludedInterests, updatedAt: new Date().toISOString() }
                 : p
             ),
           }
@@ -319,4 +344,19 @@ export const INTERESTS = [
   { value: '창업', label: '창업지원', group: '지원유형', keywords: ['창업', '스타트업', '예비창업'] },
   { value: '수출', label: '수출/해외진출', group: '지원유형', keywords: ['수출', '해외진출', '글로벌', '무역'] },
   { value: 'R&D', label: 'R&D/기술개발', group: '지원유형', keywords: ['r&d', '연구개발', '기술개발'] },
+]
+
+// 제외 관심분야 옵션 (명확히 관련 없는 분야만 선택 가능)
+// - 선택 시 해당 분야 공고는 추천 목록에서 완전히 제외됨
+export const EXCLUDED_INTEREST_OPTIONS = [
+  { value: 'bio', label: '바이오/헬스케어', keywords: ['바이오', '헬스케어', '의료', '제약', '진단', '임상', '신약', '생명공학'] },
+  { value: 'agriculture', label: '농업/축산', keywords: ['농업', '축산', '농촌', '영농', '작물', '재배', '농가', '스마트팜'] },
+  { value: 'fishery', label: '수산/어업', keywords: ['수산', '어업', '양식', '어촌', '해양', '어선'] },
+  { value: 'tourism', label: '관광/여행/숙박', keywords: ['관광', '여행', '숙박', '호텔', '리조트', '펜션', '관광지'] },
+  { value: 'construction', label: '건설/건축', keywords: ['건설', '건축', '시공', '토목', '리모델링', '배관', '전기공사'] },
+  { value: 'manufacturing', label: '전통 제조/공방', keywords: ['가죽', '피혁', '봉제', '섬유', '직물', '공방', '수공예', '도자기', '목공', '소공인'] },
+  { value: 'trade', label: '무역/수출입', keywords: ['수출', '무역', '해외진출', '통관', '관세', 'fta'] },
+  { value: 'climate', label: '기후테크/환경', keywords: ['기후테크', '탄소중립', '그린뉴딜', '친환경', '재생에너지', '태양광', '풍력'] },
+  { value: 'food', label: '요식업/식품', keywords: ['요식업', '외식업', '음식점', '식당', '베이커리', '프랜차이즈', '가맹점'] },
+  { value: 'beauty', label: '미용/뷰티샵', keywords: ['미용실', '헤어샵', '네일샵', '피부관리실', '에스테틱'] },
 ]

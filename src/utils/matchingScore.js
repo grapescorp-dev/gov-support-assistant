@@ -377,9 +377,78 @@ const SEOUL_DISTRICT_KEYWORDS = {
 }
 
 /**
+ * 공고에서 지역 제외 패턴 감지 (서울 제외, 수도권 제외 등)
+ * @param {string} text - 검색할 텍스트
+ * @returns {Object} { hasExclusion: boolean, excludedRegions: string[], message?: string }
+ */
+function detectExcludedRegions(text) {
+  const excludedRegions = []
+  let message = null
+
+  // 서울 제외 패턴
+  const seoulExclusionPatterns = [
+    /서울\s*(제외|불가|불포함|미포함)/,
+    /서울(시|특별시)?\s*(제외|불가|불포함|미포함)/,
+    /서울(시|특별시)?\s*및\s*\d+년\s*선정/,  // "서울특별시 및 2025년 선정 지자체"
+    /(제외|불가|불포함)[^.]*서울/,
+  ]
+  for (const pattern of seoulExclusionPatterns) {
+    if (pattern.test(text)) {
+      excludedRegions.push('seoul')
+      message = '서울 제외 공고'
+      break
+    }
+  }
+
+  // 수도권 제외 패턴
+  const capitalExclusionPatterns = [
+    /수도권\s*(제외|불가|불포함|미포함)/,
+    /(제외|불가|불포함)[^.]*수도권/,
+  ]
+  for (const pattern of capitalExclusionPatterns) {
+    if (pattern.test(text)) {
+      excludedRegions.push('seoul', 'gyeonggi', 'incheon')
+      message = '수도권 제외 공고'
+      break
+    }
+  }
+
+  // 비수도권 대상 패턴 (수도권 제외와 동일)
+  const nonCapitalPatterns = [
+    /비수도권\s*(대상|지역|기업|한정|전용)/,
+    /비수도권\s*(소재|에\s*위치)/,
+    /지방\s*(소재|지역|기업)\s*(대상|한정|전용)/,
+  ]
+  for (const pattern of nonCapitalPatterns) {
+    if (pattern.test(text)) {
+      if (!excludedRegions.includes('seoul')) {
+        excludedRegions.push('seoul', 'gyeonggi', 'incheon')
+        message = '비수도권 대상 공고 (수도권 제외)'
+      }
+      break
+    }
+  }
+
+  // 광역지방자치단체 대상 (서울 제외 가능성)
+  // "11개 광역지방자치단체" 등의 패턴에서 서울이 명시적으로 제외되는 경우
+  if (/광역\s*지방\s*자치\s*단체/.test(text) && /서울.*제외|제외.*서울/.test(text)) {
+    if (!excludedRegions.includes('seoul')) {
+      excludedRegions.push('seoul')
+      message = '서울 제외 광역지자체 대상 공고'
+    }
+  }
+
+  return {
+    hasExclusion: excludedRegions.length > 0,
+    excludedRegions,
+    message,
+  }
+}
+
+/**
  * 공고에서 지역 제한 정보 추출
  * @param {Object} announcement - 공고 객체
- * @returns {Object} { type: 'nationwide' | 'restricted' | 'unknown', region?: string, detectedCity?: string, detectedDistrict?: string }
+ * @returns {Object} { type: 'nationwide' | 'restricted' | 'excluded' | 'unknown', region?: string, excludedRegions?: string[], detectedCity?: string, detectedDistrict?: string }
  */
 export function extractRegionRestriction(announcement) {
   // hashTags 제외 - 모든 지역이 나열되어 있어 신뢰도 낮음
@@ -392,6 +461,18 @@ export function extractRegionRestriction(announcement) {
     .join(' ')
     .toLowerCase()
 
+  const titleText = (announcement.title || '').toLowerCase()
+
+  // 0. 지역 제외 패턴 먼저 확인 (서울 제외, 수도권 제외 등)
+  const excludedRegionsResult = detectExcludedRegions(text)
+  if (excludedRegionsResult.hasExclusion) {
+    return {
+      type: 'excluded',
+      excludedRegions: excludedRegionsResult.excludedRegions,
+      excludedMessage: excludedRegionsResult.message,
+    }
+  }
+
   // 전국 대상 키워드 확인
   if (
     text.includes('전국') ||
@@ -402,8 +483,7 @@ export function extractRegionRestriction(announcement) {
     return { type: 'nationwide' }
   }
 
-  // 제목에서 [지역명] 패턴 확인 (예: "[강원] 2026년...")
-  const titleText = (announcement.title || '').toLowerCase()
+  // 제목에서 [지역명] 패턴 확인 (예: "[강원] 2026년...", "[제주] 2026년...")
   for (const [regionKey, regionData] of Object.entries(REGION_KEYWORDS)) {
     for (const kw of regionData.main) {
       if (titleText.includes(`[${kw}]`)) {
@@ -1158,12 +1238,62 @@ function extractRegionRequirementsWithConfidence(announcement, _source) {
     confidence = CONFIDENCE.HIGH
   } else if (regionRestriction.type === 'nationwide') {
     confidence = CONFIDENCE.HIGH
+  } else if (regionRestriction.type === 'excluded') {
+    // 지역 제외가 명확하면 high (서울 제외, 수도권 제외 등)
+    confidence = CONFIDENCE.HIGH
   }
 
-  return {
+  // 서울 구 단위 제한 정보 포함
+  const result = {
     ...regionRestriction,
     confidence,
   }
+
+  // 서울 구 단위가 감지된 경우 regions 배열에 추가
+  if (regionRestriction.region === 'seoul' && regionRestriction.detectedDistrict) {
+    result.regions = ['seoul']
+    result.detectedDistrict = regionRestriction.detectedDistrict
+    result.regionLabel = getSeoulDistrictLabel(regionRestriction.detectedDistrict)
+  } else if (regionRestriction.region) {
+    result.regions = [regionRestriction.region]
+    result.regionLabel = REGION_NAMES[regionRestriction.region] || regionRestriction.region
+  }
+
+  return result
+}
+
+/**
+ * 서울 구 코드를 한글 라벨로 변환
+ */
+function getSeoulDistrictLabel(districtCode) {
+  const labels = {
+    gangnam: '강남구',
+    gangdong: '강동구',
+    gangbuk: '강북구',
+    gangseo: '강서구',
+    gwanak: '관악구',
+    gwangjin: '광진구',
+    guro: '구로구',
+    geumcheon: '금천구',
+    nowon: '노원구',
+    dobong: '도봉구',
+    dongdaemun: '동대문구',
+    dongjak: '동작구',
+    mapo: '마포구',
+    seodaemun: '서대문구',
+    seocho: '서초구',
+    seongdong: '성동구',
+    seongbuk: '성북구',
+    songpa: '송파구',
+    yangcheon: '양천구',
+    yeongdeungpo: '영등포구',
+    yongsan: '용산구',
+    eunpyeong: '은평구',
+    jongno: '종로구',
+    jung: '중구',
+    jungnang: '중랑구',
+  }
+  return labels[districtCode] || districtCode
 }
 
 /**
@@ -1857,6 +1987,21 @@ function checkRegionEligibilityForHardFilter(profile, regionReq) {
     return { status: 'pass', confidence: CONFIDENCE.LOW }
   }
 
+  // [추가] 지역 제외 타입 처리 (서울 제외, 수도권 제외 등)
+  if (regionReq.type === 'excluded' && profile.region) {
+    const profileRegion = profile.region
+    const excludedRegions = regionReq.excludedRegions || []
+
+    // 프로필 지역이 제외 목록에 포함되면 불일치
+    if (excludedRegions.includes(profileRegion)) {
+      return {
+        status: 'fail',
+        confidence: CONFIDENCE.HIGH,
+        message: regionReq.excludedMessage || '해당 지역 기업 제외 공고',
+      }
+    }
+  }
+
   if (regionReq.type === 'restricted' && profile.region) {
     // 지역 제한이 있고 프로필에 지역 정보가 있는 경우
     const profileRegion = profile.region
@@ -1868,6 +2013,21 @@ function checkRegionEligibilityForHardFilter(profile, regionReq) {
         status: 'fail',
         confidence: regionReq.confidence || CONFIDENCE.HIGH,
         message: `${regionReq.regionLabel || '해당 지역'} 소재 기업만 지원 가능`,
+      }
+    }
+
+    // [추가] 서울 구 단위 체크: 같은 서울이지만 다른 구인 경우
+    if (profileRegion === 'seoul' && regionReq.region === 'seoul' && regionReq.detectedDistrict) {
+      // 프로필에 세부지역(구) 정보가 있는 경우 (subRegion 필드 사용)
+      const profileDistrict = profile.subRegion || profile.seoulDistrict || profile.detailRegion
+      if (profileDistrict && profileDistrict !== regionReq.detectedDistrict) {
+        const districtLabel = getSeoulDistrictLabel(regionReq.detectedDistrict)
+        const profileDistrictLabel = getSeoulDistrictLabel(profileDistrict)
+        return {
+          status: 'fail',
+          confidence: CONFIDENCE.HIGH,
+          message: `서울 ${districtLabel} 소재 기업만 지원 가능 (프로필: ${profileDistrictLabel})`,
+        }
       }
     }
   }
@@ -1985,9 +2145,29 @@ function checkIndustryMismatchForHardFilter(profile, announcement) {
   ].join(' ').toLowerCase()
 
   const profileInterests = profile.interests || []
+  const profileText = [
+    profile.serviceName || '',
+    profile.businessOverview || '',
+  ].join(' ').toLowerCase()
 
-  // INDUSTRY_SPECIFIC_KEYWORDS는 기존 상수 활용 (2000번대 라인에 정의됨)
-  // 여기서는 간단한 강한 불일치 패턴만 체크
+  // 1. 특수 공고 유형 탐지 (교육생/참가자 모집, 장비 이용 등)
+  const specialProgramResult = detectSpecialProgramType(fullText)
+  if (specialProgramResult.isSpecial) {
+    return {
+      mismatch: true,
+      penaltyLevel: 'strong',
+      message: specialProgramResult.message,
+      specialType: specialProgramResult.type,
+    }
+  }
+
+  // 2. 특정 산업/업종 대상 공고 탐지
+  const industryTargetResult = detectIndustryTargetMismatch(fullText, profileInterests, profileText)
+  if (industryTargetResult.mismatch) {
+    return industryTargetResult
+  }
+
+  // 3. 전통제조/시설 키워드 체크 (기존 로직)
   const strongMismatchKeywords = [
     '가죽', '피혁', '봉제', '원단', '섬유', '직물',
     '공방', '수공예', '도자기', '목공', '주물', '주조', '단조',
@@ -1997,7 +2177,7 @@ function checkIndustryMismatchForHardFilter(profile, announcement) {
 
   const digitalInterests = ['ai', 'saas', 'ict', 'data', 'content', 'fintech', 'platform']
   const isDigitalService = profileInterests.some(i => digitalInterests.includes(i)) ||
-    (profile.businessOverview || '').toLowerCase().match(/ai|saas|플랫폼|소프트웨어|앱|서비스/)
+    profileText.match(/ai|saas|플랫폼|소프트웨어|앱|서비스|음악|음원|콘텐츠/)
 
   if (isDigitalService) {
     const hasMismatchKeyword = strongMismatchKeywords.some(kw => fullText.includes(kw))
@@ -2011,6 +2191,155 @@ function checkIndustryMismatchForHardFilter(profile, announcement) {
   }
 
   return { mismatch: false, penaltyLevel: null }
+}
+
+/**
+ * 특수 공고 유형 탐지 (교육생 모집, 장비 이용, 운영사 모집 등)
+ * - 일반 스타트업 지원금 공고가 아닌 특수 목적 공고 필터링
+ */
+function detectSpecialProgramType(text) {
+  // 교육생/참가자 모집 패턴
+  const educationPatterns = [
+    /교육생\s*모집/,
+    /참가자\s*모집/,
+    /수강생\s*모집/,
+    /연수생\s*모집/,
+    /교육\s*참여자?\s*모집/,
+    /이용\s*교육생/,
+    /장비\s*이용\s*교육/,
+    /실습\s*교육/,
+    /기초\s*교육/,
+  ]
+  for (const pattern of educationPatterns) {
+    if (pattern.test(text)) {
+      return { isSpecial: true, type: 'education_recruitment', message: '교육생/참가자 모집 공고 (기업 지원금 아님)' }
+    }
+  }
+
+  // 장비/시설 이용 모집 패턴
+  const equipmentPatterns = [
+    /장비\s*이용/,
+    /시설\s*이용/,
+    /기자재\s*이용/,
+    /레이저\s*커팅/,
+    /레이저\s*각인/,
+    /3d\s*프린터/,
+    /cnc/,
+    /uv\s*프린터/,
+    /목공\s*장비/,
+    /메이커\s*장비/,
+    /메이커스페이스/,
+    /팹랩/,
+  ]
+  for (const pattern of equipmentPatterns) {
+    if (pattern.test(text)) {
+      return { isSpecial: true, type: 'equipment_usage', message: '장비/시설 이용자 모집 (기업 지원금 아님)' }
+    }
+  }
+
+  // 운영사/기관 모집 패턴
+  const operatorPatterns = [
+    /운영사\s*모집/,
+    /운영기관\s*모집/,
+    /주관기관\s*모집/,
+    /수행기관\s*모집/,
+    /위탁기관\s*모집/,
+    /협약기관\s*모집/,
+    /교육기관\s*모집/,
+    /컨설팅\s*기관\s*모집/,
+  ]
+  for (const pattern of operatorPatterns) {
+    if (pattern.test(text)) {
+      return { isSpecial: true, type: 'operator_recruitment', message: '운영사/기관 모집 (일반 기업 대상 아님)' }
+    }
+  }
+
+  return { isSpecial: false }
+}
+
+/**
+ * 특정 산업/업종 대상 공고 탐지
+ * - 공고가 특정 산업만 대상으로 하는 경우 프로필 업종과 비교
+ */
+function detectIndustryTargetMismatch(text, profileInterests, profileText) {
+  // 산업별 대상 키워드 그룹
+  const industryTargets = [
+    {
+      name: '바이오/헬스케어',
+      keywords: ['바이오', '헬스케어', '의료기기', '제약', '생명공학', '진단키트', '임상', '신약'],
+      matchPatterns: [/바이오\s*(기업|스타트업|벤처)/, /헬스케어\s*(기업|분야)/, /의료\s*기기\s*(기업|제조)/],
+      allowedProfileKeywords: ['바이오', 'bio', 'healthcare', '의료', '헬스', '제약', '진단'],
+      allowedInterests: ['bio', 'healthcare'],
+    },
+    {
+      name: '기후테크/환경',
+      keywords: ['기후테크', '탄소중립', '그린뉴딜', '친환경', '재생에너지', '신재생', '태양광', '풍력', '수소'],
+      matchPatterns: [/기후\s*테크/, /탄소\s*중립/, /그린\s*(뉴딜|산업|기술)/, /친환경\s*(기업|기술)/],
+      allowedProfileKeywords: ['기후', '탄소', '환경', '에너지', '그린', 'esg', '친환경'],
+      allowedInterests: ['greentech', 'energy', 'environment'],
+    },
+    {
+      name: '관광/여행',
+      keywords: ['관광', '여행', '숙박', '호텔', '리조트', '펜션', '민박', '관광지', '여행사'],
+      matchPatterns: [/관광\s*(기업|산업|업체)/, /여행\s*(기업|업체|사)/, /숙박\s*(업|시설)/],
+      allowedProfileKeywords: ['관광', '여행', '숙박', '호텔', 'travel', 'tourism'],
+      allowedInterests: ['tourism', 'travel'],
+    },
+    {
+      name: '수산/어업',
+      keywords: ['수산', '어업', '양식', '어촌', '수협', '어선', '해양', '어민'],
+      matchPatterns: [/수산\s*(업|기업|물)/, /어업\s*(인|기업)/, /양식\s*(업|장)/],
+      allowedProfileKeywords: ['수산', '어업', '양식', '해양', '어촌'],
+      allowedInterests: ['fishery', 'marine'],
+    },
+    {
+      name: '농업/축산',
+      keywords: ['농업', '축산', '농촌', '영농', '농가', '축산업', '낙농', '양계', '양돈'],
+      matchPatterns: [/농업\s*(인|기업|법인)/, /축산\s*(업|농가)/, /영농\s*법인/],
+      allowedProfileKeywords: ['농업', '축산', '농촌', '스마트팜', '애그테크', 'agtech'],
+      allowedInterests: ['agriculture', 'agtech', 'smartfarm'],
+    },
+    {
+      name: '무역/수출',
+      keywords: ['수출', '무역', '해외진출', '수입', '통관', '관세', 'fta', '수출입'],
+      matchPatterns: [/수출\s*(기업|업체|지원)/, /무역\s*(기업|업체|회사)/, /해외\s*진출\s*기업/],
+      allowedProfileKeywords: ['수출', '무역', '해외', '글로벌', 'export', 'trade', 'global'],
+      allowedInterests: ['trade', 'export', 'global'],
+    },
+  ]
+
+  // 프로필이 디지털/IT 서비스인지 확인
+  const digitalKeywords = ['ai', '인공지능', '플랫폼', 'saas', '소프트웨어', 'sw', '앱', '서비스', '음악', '음원', '콘텐츠', '미디어']
+  const isDigitalProfile = profileInterests.some(i => ['ai', 'saas', 'ict', 'data', 'content', 'fintech', 'platform'].includes(i)) ||
+    digitalKeywords.some(kw => profileText.includes(kw))
+
+  if (!isDigitalProfile) {
+    return { mismatch: false }
+  }
+
+  // 각 산업별로 공고가 해당 산업 대상인지 확인
+  for (const industry of industryTargets) {
+    // 공고가 해당 산업 대상인지 확인 (matchPatterns로 더 정확하게)
+    const isIndustryTarget = industry.matchPatterns.some(pattern => pattern.test(text)) ||
+      (industry.keywords.filter(kw => text.includes(kw)).length >= 2) // 키워드 2개 이상 매칭
+
+    if (isIndustryTarget) {
+      // 프로필이 해당 산업과 관련 있는지 확인
+      const profileHasIndustry = industry.allowedInterests.some(i => profileInterests.includes(i)) ||
+        industry.allowedProfileKeywords.some(kw => profileText.includes(kw))
+
+      if (!profileHasIndustry) {
+        return {
+          mismatch: true,
+          penaltyLevel: 'strong',
+          message: `${industry.name} 분야 대상 공고 (프로필 업종 불일치)`,
+          targetIndustry: industry.name,
+        }
+      }
+    }
+  }
+
+  return { mismatch: false }
 }
 
 /**
@@ -2066,6 +2395,18 @@ export function applyHardFilter(profile, announcement, options = {}) {
   // 3. 요구사항 추출
   const requirements = buildHardRequirements(announcement)
 
+  // 3.5 [v3] 제외 관심 분야 체크 (HIGH confidence - 즉시 제외)
+  const excludedCheck = checkExcludedInterests(profile, announcement)
+  if (excludedCheck.excluded) {
+    failReasons.push({
+      label: HARD_FILTER_LABELS.INDUSTRY_MISMATCH,
+      message: excludedCheck.reason,
+      confidence: CONFIDENCE.HIGH,
+      source: 'excludedInterests',
+      excludedType: excludedCheck.excludedType,
+    })
+  }
+
   // 4. 데이터 가용성 체크 (bizinfo/kstartup은 parsed 없음)
   if (!hasParsedData && ['bizinfo', 'kstartup'].includes(source)) {
     unknownReasons.push({
@@ -2108,15 +2449,23 @@ export function applyHardFilter(profile, announcement, options = {}) {
     })
   }
 
-  // 8. 업종 불일치 체크 (strong penalty만 제외)
+  // 8. 업종 불일치 체크 (strong penalty는 HIGH confidence로 제외)
   if (!options.skipIndustryCheck) {
     const industryResult = checkIndustryMismatchForHardFilter(profile, announcement)
     if (industryResult.mismatch && industryResult.penaltyLevel === 'strong') {
+      // 특수 공고 유형(교육생 모집, 장비 이용, 운영사 모집)은 HIGH confidence
+      // 산업 대상 불일치도 HIGH confidence
+      const isSpecialType = ['education_recruitment', 'equipment_usage', 'operator_recruitment'].includes(industryResult.specialType)
+      const isIndustryTarget = !!industryResult.targetIndustry
+      const confidence = (isSpecialType || isIndustryTarget) ? CONFIDENCE.HIGH : CONFIDENCE.MEDIUM
+
       failReasons.push({
         label: HARD_FILTER_LABELS.INDUSTRY_MISMATCH,
         message: industryResult.message,
-        confidence: CONFIDENCE.MEDIUM, // industry는 medium으로 처리
+        confidence,
         source: 'industry',
+        specialType: industryResult.specialType,
+        targetIndustry: industryResult.targetIndustry,
       })
     }
   }
@@ -2378,11 +2727,124 @@ function hasAllowedInterest(profile, allowedInterests) {
 }
 
 /**
+ * 프로필의 사업개요/타겟시장에서 핵심 키워드 추출
+ * @param {Object} profile - 사용자 프로필
+ * @returns {Object} { keywords: string[], targetType: 'b2b' | 'b2c' | 'b2g' | null, domains: string[] }
+ */
+function extractProfileKeywords(profile) {
+  const text = [
+    profile.serviceName || '',
+    profile.businessOverview || '',
+    profile.targetMarket || '',
+  ].join(' ').toLowerCase()
+
+  const keywords = []
+  const domains = []
+
+  // 기술/서비스 키워드 추출
+  const techKeywords = {
+    ai: ['ai', '인공지능', '머신러닝', '딥러닝', 'llm', 'gpt', '자동화'],
+    music: ['음악', '음원', '사운드', '오디오', '스트리밍', '저작권'],
+    content: ['콘텐츠', '미디어', '영상', '동영상', '크리에이터'],
+    platform: ['플랫폼', 'saas', '서비스', '앱', '어플리케이션'],
+    data: ['데이터', '분석', '빅데이터', '추천'],
+    iot: ['iot', '스마트', '센서', '하드웨어', '디바이스'],
+    blockchain: ['블록체인', '암호화폐', 'nft', '토큰'],
+    fintech: ['핀테크', '금융', '결제', '송금', '보험'],
+  }
+
+  for (const [domain, kws] of Object.entries(techKeywords)) {
+    if (kws.some(kw => text.includes(kw))) {
+      domains.push(domain)
+      keywords.push(...kws.filter(kw => text.includes(kw)))
+    }
+  }
+
+  // 타겟 시장 유형 감지 (B2B/B2C/B2G)
+  let targetType = null
+  if (text.includes('b2b') || text.includes('기업') || text.includes('사업자') ||
+      text.includes('매장') || text.includes('점포') || text.includes('업체')) {
+    targetType = 'b2b'
+  } else if (text.includes('b2c') || text.includes('소비자') || text.includes('개인') ||
+             text.includes('일반인') || text.includes('사용자')) {
+    targetType = 'b2c'
+  } else if (text.includes('b2g') || text.includes('공공') || text.includes('정부') ||
+             text.includes('관공서') || text.includes('지자체')) {
+    targetType = 'b2g'
+  }
+
+  return { keywords: [...new Set(keywords)], targetType, domains: [...new Set(domains)] }
+}
+
+/**
+ * 프로필의 제외 관심 분야와 공고가 매칭되는지 확인
+ * @param {Object} profile - 사용자 프로필
+ * @param {Object} announcement - 공고
+ * @returns {Object} { excluded: boolean, reason: string | null }
+ */
+function checkExcludedInterests(profile, announcement) {
+  const excludedInterests = profile.excludedInterests || []
+  if (excludedInterests.length === 0) {
+    return { excluded: false, reason: null }
+  }
+
+  const announcementText = [
+    announcement.title || '',
+    announcement.summary || '',
+    ...(announcement.tags || []),
+  ].join(' ').toLowerCase()
+
+  // 제외 관심 분야 키워드 매핑
+  const excludedKeywordsMap = {
+    bio: ['바이오', '헬스케어', '의료', '제약', '진단', '임상', '신약', '생명공학'],
+    agriculture: ['농업', '축산', '농촌', '영농', '작물', '재배', '농가'],
+    fishery: ['수산', '어업', '양식', '어촌', '해양', '어선'],
+    tourism: ['관광', '여행', '숙박', '호텔', '리조트', '펜션', '관광지'],
+    construction: ['건설', '건축', '시공', '토목', '리모델링', '배관', '전기공사'],
+    manufacturing: ['가죽', '피혁', '봉제', '섬유', '직물', '공방', '수공예', '도자기', '목공', '소공인'],
+    trade: ['수출', '무역', '해외진출', '통관', '관세'],
+    climate: ['기후테크', '탄소중립', '그린뉴딜', '친환경', '재생에너지', '태양광', '풍력'],
+    food: ['요식업', '외식업', '음식점', '식당', '베이커리', '프랜차이즈', '가맹점'],
+    beauty: ['미용실', '헤어샵', '네일샵', '피부관리실', '에스테틱'],
+  }
+
+  for (const excluded of excludedInterests) {
+    const keywords = excludedKeywordsMap[excluded]
+    if (keywords) {
+      // 키워드가 2개 이상 매칭되거나, 제목에서 1개 매칭되면 제외
+      const matchedKeywords = keywords.filter(kw => announcementText.includes(kw))
+      const titleText = (announcement.title || '').toLowerCase()
+      const titleMatch = keywords.some(kw => titleText.includes(kw))
+
+      if (matchedKeywords.length >= 2 || titleMatch) {
+        const labelMap = {
+          bio: '바이오/헬스케어', agriculture: '농업/축산', fishery: '수산/어업',
+          tourism: '관광/여행', construction: '건설/건축', manufacturing: '전통 제조/공방',
+          trade: '무역/수출입', climate: '기후테크/환경', food: '요식업/식품', beauty: '미용/뷰티샵',
+        }
+        return {
+          excluded: true,
+          reason: `제외 관심 분야: ${labelMap[excluded] || excluded}`,
+          excludedType: excluded,
+        }
+      }
+    }
+  }
+
+  return { excluded: false, reason: null }
+}
+
+/**
  * 프로필과 공고를 비교하여 매칭률 계산
  *
  * [v2] Relevance Gate + Industry Mismatch Penalty 추가
  * - 도메인 적합도(관심분야+키워드 매칭)가 THRESHOLD 미만이면 점수 상한 적용
  * - 업종 특화 공고에 무관한 프로필은 패널티 적용
+ *
+ * [v3] 사업개요/타겟시장 키워드 추출 및 제외 관심 분야 필터링 추가
+ * - businessOverview에서 핵심 키워드 자동 추출하여 매칭에 반영
+ * - targetMarket에서 B2B/B2C 유형 감지
+ * - excludedInterests에 해당하는 공고는 점수 0 반환
  *
  * @param {Object} profile - 사용자 프로필
  * @param {Object} announcement - 지원사업 공고
@@ -2390,6 +2852,15 @@ function hasAllowedInterest(profile, allowedInterests) {
  */
 export function calculateMatchingScore(profile, announcement) {
   if (!profile || !announcement) return 0
+
+  // [v3] 제외 관심 분야 체크 - 해당되면 즉시 0점 반환
+  const excludedCheck = checkExcludedInterests(profile, announcement)
+  if (excludedCheck.excluded) {
+    return 0
+  }
+
+  // [v3] 프로필 키워드 추출
+  const profileKeywords = extractProfileKeywords(profile)
 
   let score = 0
 
@@ -2411,6 +2882,11 @@ export function calculateMatchingScore(profile, announcement) {
     matchedDomains: [], // 프로필과 매칭된 도메인 목록
     stageBoost: 0,
     stageBoostApplied: false,
+    // [v3] 추가 필드
+    profileKeywords: profileKeywords.keywords,
+    profileTargetType: profileKeywords.targetType,
+    profileDomains: profileKeywords.domains,
+    businessOverviewBonus: 0,
   }
 
   // 통합 검색 텍스트 생성 (공고의 모든 텍스트)
@@ -2455,10 +2931,11 @@ export function calculateMatchingScore(profile, announcement) {
   }
 
   // 1-2. 서비스명/사업개요 키워드 직접 매칭 (최대 15점)
-  const profileKeywords = extractKeywordsFromProfile(profile)
+  // profileKeywords는 상단에서 extractProfileKeywords(profile)로 이미 추출됨
+  const simpleKeywords = extractKeywordsFromProfile(profile)
   let keywordMatchCount = 0
-  if (profileKeywords.length > 0) {
-    profileKeywords.forEach(keyword => {
+  if (simpleKeywords.length > 0) {
+    simpleKeywords.forEach(keyword => {
       if (fullSearchText.includes(keyword.toLowerCase())) {
         keywordMatchCount++
       }
@@ -2470,10 +2947,42 @@ export function calculateMatchingScore(profile, announcement) {
     }
   }
 
+  // [v3] 사업개요/타겟시장에서 추출한 도메인 키워드 보너스 (최대 10점)
+  // - profileKeywords.domains와 공고 텍스트의 매칭
+  if (profileKeywords.domains.length > 0) {
+    const domainKeywordMap = {
+      ai: ['ai', '인공지능', '머신러닝', '딥러닝', '자동화'],
+      music: ['음악', '음원', '사운드', '오디오', '스트리밍'],
+      content: ['콘텐츠', '미디어', '영상', '동영상', '크리에이터'],
+      platform: ['플랫폼', 'saas', '서비스형'],
+      data: ['데이터', '분석', '빅데이터'],
+      iot: ['iot', '스마트', '센서'],
+      blockchain: ['블록체인', 'nft', '토큰'],
+      fintech: ['핀테크', '금융', '결제'],
+    }
+
+    let domainMatchCount = 0
+    profileKeywords.domains.forEach(domain => {
+      const keywords = domainKeywordMap[domain]
+      if (keywords && keywords.some(kw => fullSearchText.includes(kw))) {
+        domainMatchCount++
+      }
+    })
+
+    if (domainMatchCount > 0) {
+      breakdown.businessOverviewBonus = Math.min(10, domainMatchCount * 5)
+      score += breakdown.businessOverviewBonus
+      breakdown.matchedDomains = profileKeywords.domains.filter(domain => {
+        const keywords = domainKeywordMap[domain]
+        return keywords && keywords.some(kw => fullSearchText.includes(kw))
+      })
+    }
+  }
+
   // ============================================================
   // [NEW] Relevance Score 계산 (Relevance Gate용)
   // ============================================================
-  const relevanceScore = breakdown.interestScore + breakdown.keywordScore
+  const relevanceScore = breakdown.interestScore + breakdown.keywordScore + breakdown.businessOverviewBonus
 
   // ============================================================
   // 2. 기업 적격성 매칭 (최대 30점)
@@ -2908,4 +3417,258 @@ export function groupByMonth(announcements) {
 export function formatMonthName(monthKey) {
   const [year, month] = monthKey.split('-')
   return `${year}년 ${parseInt(month)}월`
+}
+
+// ==============================================
+// [하이브리드 매칭] AI 분류 기반 매칭 로직
+// ==============================================
+
+/**
+ * 프로필 interests를 정규화된 키로 변환
+ * - useProfileStore의 INTERESTS value를 매칭 가능한 형태로 변환
+ */
+const PROFILE_INTERESTS_MAP = {
+  // 프로필 interests value -> 매칭 키
+  ai: ['ai', 'ai_data'],
+  data: ['data', 'ai_data'],
+  ict: ['ict', 'ict_sw'],
+  sw: ['sw', 'ict_sw'],
+  cloud: ['cloud', 'cloud_saas'],
+  saas: ['saas', 'cloud_saas'],
+  content: ['content', 'content_media'],
+  media: ['media', 'content_media'],
+  game: ['game'],
+  music: ['music'],
+  bio: ['bio', 'bio_healthcare'],
+  healthcare: ['healthcare', 'bio_healthcare'],
+  medtech: ['medtech', 'medical_device'],
+  manufacturing: ['manufacturing'],
+  smartfactory: ['smartfactory', 'manufacturing'],
+  hardware: ['hardware'],
+  iot: ['iot', 'hardware'],
+  fintech: ['fintech'],
+  finance: ['finance', 'fintech'],
+  logistics: ['logistics'],
+  mobility: ['mobility', 'logistics'],
+  foodtech: ['foodtech'],
+  edutech: ['edutech'],
+  // 특수 분야
+  tourism: ['tourism'],
+  agriculture: ['agriculture'],
+  fishery: ['fishery'],
+  construction: ['construction'],
+  trade: ['trade', 'trade_export'],
+  export: ['export', 'trade_export'],
+  retail: ['retail', 'traditional_retail'],
+}
+
+/**
+ * AI 분류 결과와 프로필 interests의 매칭 여부 확인
+ *
+ * @param {Object} classification - AI 분류 결과 { primaryIndustry, secondaryIndustry, isGeneralProgram, targetType }
+ * @param {Object} profile - 사용자 프로필 { interests: [...] }
+ * @returns {Object} { isMatch, matchLevel, reason }
+ */
+export function checkIndustryMatch(classification, profile) {
+  if (!classification || !profile) {
+    return { isMatch: true, matchLevel: 'unknown', reason: '분류 정보 없음' }
+  }
+
+  const { primaryIndustry, secondaryIndustry, isGeneralProgram, targetType, confidence } = classification
+  const profileInterests = profile.interests || []
+
+  // 1. 범용 프로그램이면 매칭
+  if (isGeneralProgram || primaryIndustry === 'general_startup' || primaryIndustry === 'general_sme') {
+    return { isMatch: true, matchLevel: 'general', reason: '분야 무관 범용 프로그램' }
+  }
+
+  // 2. 대상 유형 체크 (특수 대상 공고는 일반 스타트업과 불일치)
+  if (targetType === 'operator') {
+    // 교육기관/운영사 모집은 일반 스타트업에게 부적합
+    return { isMatch: false, matchLevel: 'target_mismatch', reason: '교육기관/운영사 대상 공고' }
+  }
+
+  if (targetType === 'education') {
+    // 교육생/참가자 모집은 기업 지원금이 아님
+    return { isMatch: false, matchLevel: 'target_mismatch', reason: '교육생/참가자 모집 공고 (기업 지원금 아님)' }
+  }
+
+  if (targetType === 'equipment') {
+    // 장비/시설 이용자 모집은 기업 지원금이 아님
+    return { isMatch: false, matchLevel: 'target_mismatch', reason: '장비/시설 이용자 모집 (기업 지원금 아님)' }
+  }
+
+  // 3. 프로필 interests를 매칭 키로 변환
+  const profileMatchKeys = new Set()
+  profileInterests.forEach(interest => {
+    const keys = PROFILE_INTERESTS_MAP[interest] || [interest]
+    keys.forEach(k => profileMatchKeys.add(k))
+  })
+
+  // 서비스명/사업개요에서 추가 키워드 추출
+  const profileText = [
+    profile.serviceName || '',
+    profile.businessOverview || '',
+  ].join(' ').toLowerCase()
+
+  // AI/음악/콘텐츠 등 핵심 키워드 감지
+  if (profileText.includes('ai') || profileText.includes('인공지능')) {
+    profileMatchKeys.add('ai')
+    profileMatchKeys.add('ai_data')
+  }
+  if (profileText.includes('음악') || profileText.includes('음원') || profileText.includes('music')) {
+    profileMatchKeys.add('music')
+    profileMatchKeys.add('content_media')
+  }
+  if (profileText.includes('콘텐츠') || profileText.includes('미디어')) {
+    profileMatchKeys.add('content')
+    profileMatchKeys.add('content_media')
+  }
+  if (profileText.includes('플랫폼') || profileText.includes('saas') || profileText.includes('서비스')) {
+    profileMatchKeys.add('ict_sw')
+    profileMatchKeys.add('cloud_saas')
+  }
+
+  // 4. 주 산업 분야 매칭 확인
+  const primaryMatches = profileMatchKeys.has(primaryIndustry)
+  const secondaryMatches = secondaryIndustry && profileMatchKeys.has(secondaryIndustry)
+
+  if (primaryMatches) {
+    return { isMatch: true, matchLevel: 'primary', reason: `주 분야(${primaryIndustry}) 매칭` }
+  }
+
+  if (secondaryMatches) {
+    return { isMatch: true, matchLevel: 'secondary', reason: `부 분야(${secondaryIndustry}) 매칭` }
+  }
+
+  // 5. 불일치 케이스 분류
+  // 오프라인/전통 분야 vs 디지털 서비스
+  const offlineIndustries = [
+    'tourism', 'agriculture', 'fishery', 'construction',
+    'trade_export', 'traditional_retail', 'education_operator', 'social_enterprise',
+    'bio_healthcare', 'climate_tech', 'manufacturing', // 특정 산업 대상 공고
+  ]
+
+  const isOfflineProgram = offlineIndustries.includes(primaryIndustry)
+  const isDigitalProfile = profileMatchKeys.has('ai') || profileMatchKeys.has('ict_sw') ||
+    profileMatchKeys.has('cloud_saas') || profileMatchKeys.has('content_media')
+
+  if (isOfflineProgram && isDigitalProfile) {
+    return {
+      isMatch: false,
+      matchLevel: 'industry_mismatch',
+      reason: `업종 불일치: ${primaryIndustry}(공고) vs 디지털서비스(프로필)`,
+      confidence: confidence || 80,
+    }
+  }
+
+  // 6. 그 외 불일치
+  return {
+    isMatch: false,
+    matchLevel: 'weak_mismatch',
+    reason: `분야 불일치: ${primaryIndustry}`,
+    confidence: confidence || 70,
+  }
+}
+
+/**
+ * AI 분류 결과를 기반으로 매칭 점수 조정
+ *
+ * @param {number} baseScore - 기존 매칭 점수
+ * @param {Object} classification - AI 분류 결과
+ * @param {Object} profile - 사용자 프로필
+ * @returns {Object} { adjustedScore, adjustment, reason }
+ */
+export function adjustScoreByClassification(baseScore, classification, profile) {
+  const matchResult = checkIndustryMatch(classification, profile)
+
+  if (matchResult.isMatch) {
+    // 매칭되면 점수 유지 또는 약간 가점
+    if (matchResult.matchLevel === 'primary') {
+      return {
+        adjustedScore: Math.min(100, baseScore + 5),
+        adjustment: 5,
+        reason: matchResult.reason,
+        isMatch: true,
+      }
+    }
+    return {
+      adjustedScore: baseScore,
+      adjustment: 0,
+      reason: matchResult.reason,
+      isMatch: true,
+    }
+  }
+
+  // 불일치 시 점수 대폭 감점
+  let penalty = 0
+
+  switch (matchResult.matchLevel) {
+    case 'target_mismatch':
+      // 대상 불일치 (운영사 모집 등) → 추천에서 제외
+      penalty = -50
+      break
+    case 'industry_mismatch':
+      // 업종 명확 불일치 → 추천에서 제외
+      penalty = -45
+      break
+    case 'weak_mismatch':
+      // 약한 불일치 → 감점하되 유지
+      penalty = -25
+      break
+    default:
+      penalty = -20
+  }
+
+  return {
+    adjustedScore: Math.max(0, baseScore + penalty),
+    adjustment: penalty,
+    reason: matchResult.reason,
+    isMatch: false,
+  }
+}
+
+/**
+ * 하이브리드 매칭 점수 계산
+ * - 기존 규칙 기반 점수 + AI 분류 기반 조정
+ *
+ * @param {Object} profile - 사용자 프로필
+ * @param {Object} announcement - 공고 객체
+ * @param {Object} classification - AI 분류 결과 (optional)
+ * @returns {Object} { score, breakdown, classification }
+ */
+export function calculateHybridMatchingScore(profile, announcement, classification = null) {
+  // 1. 기존 규칙 기반 점수 계산
+  const baseScore = calculateMatchingScore(profile, announcement)
+
+  // 2. AI 분류가 없으면 기존 점수 반환
+  if (!classification) {
+    return {
+      score: baseScore,
+      breakdown: {
+        baseScore,
+        aiAdjustment: 0,
+        aiReason: 'AI 분류 없음',
+      },
+      classification: null,
+    }
+  }
+
+  // 3. AI 분류 기반 점수 조정
+  const { adjustedScore, adjustment, reason, isMatch } = adjustScoreByClassification(
+    baseScore,
+    classification,
+    profile
+  )
+
+  return {
+    score: adjustedScore,
+    breakdown: {
+      baseScore,
+      aiAdjustment: adjustment,
+      aiReason: reason,
+      aiMatch: isMatch,
+    },
+    classification,
+  }
 }

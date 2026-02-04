@@ -3,8 +3,21 @@ import { useNavigate, Link } from 'react-router-dom'
 import { useSearchStore } from '../stores/useSearchStore'
 import { useProfileStore, INTERESTS, COMPANY_TYPES, BUSINESS_AGES, REGIONS } from '../stores/useProfileStore'
 import { useDocumentStore } from '../stores/useDocumentStore'
-import { searchAnnouncements, analyzeProgram, summarizeProgramFromDoc } from '../api/announcements'
-import { calculateMatchingScore, extractRegionRestriction, getRegionName, checkEligibility } from '../utils/matchingScore'
+import {
+  searchAnnouncements,
+  analyzeProgram,
+  summarizeProgramFromDoc,
+  classifyAnnouncementsBatch,
+  getIndustryClassFromCache,
+  getIndustryClassCacheStats,
+} from '../api/announcements'
+import {
+  calculateMatchingScore,
+  extractRegionRestriction,
+  getRegionName,
+  checkEligibility,
+  calculateHybridMatchingScore,
+} from '../utils/matchingScore'
 import { getAnnouncementLink } from '../utils/getAnnouncementLink'
 import { stripHtml } from '../utils/stripHtml'
 import { CollapsibleTags } from '../components/CollapsibleTags'
@@ -88,6 +101,12 @@ export function SearchPage() {
   // [UX 개선] 상세 필터 접기/펼치기 상태
   const [isFilterExpanded, setIsFilterExpanded] = useState(false)
 
+  // [하이브리드 매칭] AI 분류 상태
+  const [isClassifying, setIsClassifying] = useState(false)
+  const [classificationProgress, setClassificationProgress] = useState({ cached: 0, total: 0, processed: 0 })
+  const [classificationMap, setClassificationMap] = useState(new Map())
+  const [useHybridMatching, setUseHybridMatching] = useState(true) // 하이브리드 매칭 사용 여부
+
   // 필터가 적용되었는지 확인 (하나라도 선택되면 true)
   const hasActiveFilters = selectedTags.length > 0 || selectedCategory !== '전체' || selectedSource !== 'all'
 
@@ -123,19 +142,63 @@ export function SearchPage() {
       const hardFilterResult = eligibilityResult.hardFilterResult
       const hardPass = hardFilterResult?.hardPass // true, false, or null (unknown)
 
-      // 디버그: 첫 5개 공고의 Hard Filter 결과 로깅
-      if (program.id && results.indexOf(program) < 5) {
-        console.log(`[HardFilter] ${program.title?.substring(0, 30)}...`, {
-          hardPass,
+      // [하이브리드 매칭] AI 분류 결과 가져오기
+      const classification = classificationMap.get(program.id) || getIndustryClassFromCache(program)
+
+      // [하이브리드 매칭] 점수 계산
+      let matchingScore
+      let hybridBreakdown = null
+
+      if (useHybridMatching && classification && activeProfile) {
+        // 하이브리드 매칭 사용
+        const hybridResult = calculateHybridMatchingScore(activeProfile, program, classification)
+        matchingScore = hybridResult.score
+        hybridBreakdown = hybridResult.breakdown
+      } else {
+        // 기존 규칙 기반 매칭
+        matchingScore = calculateMatchingScore(activeProfile, program)
+      }
+
+      // 디버그: 특정 공고 또는 첫 5개 공고의 매칭 결과 로깅
+      const programIdStr = String(program.id || '')
+      const isTargetProgram =
+        programIdStr.includes('176145') || // 메이커 장비
+        programIdStr.includes('118169') || // 기후테크
+        programIdStr.includes('118094') || // 관악구
+        (program.title || '').includes('메이커') ||
+        (program.title || '').includes('기후테크') ||
+        (program.title || '').includes('관악구')
+
+      if (isTargetProgram || (program.id && results.indexOf(program) < 3)) {
+        console.log(`[Matching] ${(program.title || '').substring(0, 40)}...`, {
+          id: program.id,
+          matchingScore,
           eligible: eligibilityResult.eligible,
-          failReasons: hardFilterResult?.hardFailReasons?.map(r => r.label),
-          unknownReasons: hardFilterResult?.hardUnknownReasons?.map(r => r.label),
+          hardPass,
+          hardFailReasons: hardFilterResult?.hardFailReasons?.map(r => r.message),
+          regionRestriction: {
+            type: regionRestriction.type,
+            region: regionRestriction.region,
+            detectedDistrict: regionRestriction.detectedDistrict,
+          },
+          profileRegion: {
+            region: activeProfile?.region,
+            subRegion: activeProfile?.subRegion,
+          },
+          classification: classification ? {
+            primaryIndustry: classification.primaryIndustry,
+            targetType: classification.targetType,
+            confidence: classification.confidence,
+          } : null,
+          hybridBreakdown,
         })
       }
 
       return {
         ...program,
-        matchingScore: calculateMatchingScore(activeProfile, program),
+        matchingScore,
+        hybridBreakdown,
+        classification,
         isExpired: program.deadline ? new Date(program.deadline) < today : false,
         regionRestriction,
         isRegionMismatch,
@@ -221,7 +284,7 @@ export function SearchPage() {
       if (!b.deadline) return -1
       return new Date(a.deadline) - new Date(b.deadline)
     })
-  }, [results, activeProfile, sortBy, showExpired, showOnlyMatched, selectedCategory, selectedType, selectedEventSubTab, selectedTags, selectedSource])
+  }, [results, activeProfile, sortBy, showExpired, showOnlyMatched, selectedCategory, selectedType, selectedEventSubTab, selectedTags, selectedSource, classificationMap, useHybridMatching])
 
   // 초기 로딩 - 전체 목록 가져오기
   useEffect(() => {
@@ -246,6 +309,11 @@ export function SearchPage() {
       console.log('[SearchPage] API 검색 결과:', data.length, '건')
       console.log('[SearchPage] 프로필 상태:', activeProfile ? '있음' : '없음')
       setResults(data)
+
+      // [하이브리드 매칭] 프로필이 있고, 하이브리드 매칭이 켜져 있으면 AI 분류 실행
+      if (activeProfile && useHybridMatching && data.length > 0) {
+        runHybridClassification(data)
+      }
     } catch (error) {
       console.error('[SearchPage] 검색 오류:', error)
       // 개발 환경에서는 로컬 목업 데이터 사용
@@ -255,6 +323,35 @@ export function SearchPage() {
       setResults(filtered)
     } finally {
       setLoading(false)
+    }
+  }
+
+  // [하이브리드 매칭] AI 분류 실행
+  const runHybridClassification = async (announcements) => {
+    setIsClassifying(true)
+    setClassificationProgress({ cached: 0, total: announcements.length, processed: 0 })
+
+    try {
+      // 캐시 통계 먼저 확인
+      const cacheStats = getIndustryClassCacheStats()
+      console.log('[HybridMatching] 캐시 통계:', cacheStats)
+
+      // 배치 분류 실행 (동시성 3으로 제한)
+      const classMap = await classifyAnnouncementsBatch(
+        announcements,
+        3,
+        (progress) => {
+          setClassificationProgress(progress)
+          console.log('[HybridMatching] 진행률:', progress)
+        }
+      )
+
+      setClassificationMap(classMap)
+      console.log('[HybridMatching] 분류 완료:', classMap.size, '건')
+    } catch (error) {
+      console.error('[HybridMatching] 분류 오류:', error)
+    } finally {
+      setIsClassifying(false)
     }
   }
 
@@ -463,6 +560,30 @@ export function SearchPage() {
         <p className="text-sm text-gray-600">{SEARCH_PAGE_HEADER.sub}</p>
         <p className="text-xs text-gray-500 mt-2">{SEARCH_PAGE_HEADER.info}</p>
       </div>
+
+      {/* ========================================
+          [하이브리드 매칭] AI 분류 진행 상태 표시
+          ======================================== */}
+      {isClassifying && (
+        <div className="bg-indigo-50 border border-indigo-200 p-4 rounded-xl">
+          <div className="flex items-center gap-3">
+            <Loader2 size={20} className="text-indigo-500 animate-spin" />
+            <div className="flex-1">
+              <h3 className="font-semibold text-indigo-800">AI가 공고를 분석하고 있어요</h3>
+              <p className="text-sm text-indigo-600 mt-1">
+                {classificationProgress.processed} / {classificationProgress.total}개 완료
+                {classificationProgress.cached > 0 && ` (캐시: ${classificationProgress.cached}개)`}
+              </p>
+              <div className="w-full bg-indigo-200 rounded-full h-2 mt-2">
+                <div
+                  className="bg-indigo-500 h-2 rounded-full transition-all duration-300"
+                  style={{ width: `${(classificationProgress.processed / classificationProgress.total) * 100}%` }}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ========================================
           [마이크로카피] 프로필 신호 부족 배너 (조건부)
@@ -1173,12 +1294,13 @@ export function SearchPage() {
           )}
         </div>
 
-        {/* AI 분석 패널 */}
-        <div className="lg:col-span-2 space-y-4">
-          <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
-            <Sparkles size={20} className="text-yellow-500" />
-            AI 분석
-          </h3>
+        {/* AI 분석 패널 - 스크롤 시 고정 */}
+        <div className="lg:col-span-2">
+          <div className="sticky top-4 space-y-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
+            <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 bg-gray-50 py-2 sticky top-0 z-10">
+              <Sparkles size={20} className="text-yellow-500" />
+              AI 분석
+            </h3>
 
           {selectedProgram ? (
             <div className="bg-white p-5 rounded-lg border border-gray-200 space-y-4">
@@ -1454,6 +1576,7 @@ export function SearchPage() {
               <p>지원사업을 선택하면<br />AI 분석 결과를 확인할 수 있습니다</p>
             </div>
           )}
+          </div>
         </div>
       </div>
     </div>
