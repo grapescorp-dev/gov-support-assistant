@@ -22,7 +22,6 @@ import { getAnnouncementLink } from '../utils/getAnnouncementLink'
 import { stripHtml } from '../utils/stripHtml'
 import { CollapsibleTags } from '../components/CollapsibleTags'
 import {
-  SEARCH_PAGE_HEADER,
   PROFILE_WEAK_SIGNAL_BANNER,
   SEARCH_RESULTS_COPY,
   WHY_RECOMMENDED_COPY,
@@ -553,26 +552,21 @@ export function SearchPage() {
   return (
     <div className="space-y-6">
       {/* ========================================
-          [마이크로카피] 검색 페이지 상단 안내 (항상 표시)
-          ======================================== */}
-      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-4 rounded-xl border border-blue-100">
-        <h2 className="text-lg font-semibold text-gray-900 mb-1">{SEARCH_PAGE_HEADER.main}</h2>
-        <p className="text-sm text-gray-600">{SEARCH_PAGE_HEADER.sub}</p>
-        <p className="text-xs text-gray-500 mt-2">{SEARCH_PAGE_HEADER.info}</p>
-      </div>
-
-      {/* ========================================
           [하이브리드 매칭] AI 분류 진행 상태 표시
+          - AI 분석 중에는 맞춤 공고가 로딩 중임을 안내
           ======================================== */}
       {isClassifying && (
         <div className="bg-indigo-50 border border-indigo-200 p-4 rounded-xl">
           <div className="flex items-center gap-3">
             <Loader2 size={20} className="text-indigo-500 animate-spin" />
             <div className="flex-1">
-              <h3 className="font-semibold text-indigo-800">AI가 공고를 분석하고 있어요</h3>
+              <h3 className="font-semibold text-indigo-800">AI가 맞춤 공고를 분석하고 있어요</h3>
               <p className="text-sm text-indigo-600 mt-1">
                 {classificationProgress.processed} / {classificationProgress.total}개 완료
                 {classificationProgress.cached > 0 && ` (캐시: ${classificationProgress.cached}개)`}
+              </p>
+              <p className="text-xs text-indigo-500 mt-1">
+                분석이 완료되면 맞춤형 공고가 표시됩니다. 잠시만 기다려주세요.
               </p>
               <div className="w-full bg-indigo-200 rounded-full h-2 mt-2">
                 <div
@@ -979,8 +973,9 @@ export function SearchPage() {
             <>
               {/* ========================================
                   [섹션 A] 내 기준 추천 공고
+                  - AI 분석 완료 후에만 표시
                   ======================================== */}
-              {activeProfile && recommendedResults.length > 0 && (
+              {activeProfile && (
                 <div className="space-y-3">
                   <div className="flex items-center gap-2">
                     <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center">
@@ -988,16 +983,35 @@ export function SearchPage() {
                     </div>
                     <div>
                       <h3 className="font-semibold text-gray-900">내 기준 추천 공고</h3>
-                      <p className="text-xs text-gray-500">프로필 기준 매칭률 {MATCHING_THRESHOLD}% 이상</p>
+                      <p className="text-xs text-gray-500">
+                        {isClassifying ? 'AI 분석 중...' : `프로필 기준 매칭률 ${MATCHING_THRESHOLD}% 이상`}
+                      </p>
                     </div>
-                    <span className="ml-auto text-sm font-medium text-green-600">{recommendedResults.length}건</span>
+                    <span className="ml-auto text-sm font-medium text-green-600">
+                      {isClassifying ? (
+                        <Loader2 size={16} className="animate-spin" />
+                      ) : (
+                        `${recommendedResults.length}건`
+                      )}
+                    </span>
                   </div>
 
-                  {/* [마이크로카피] 추천 결과 리스트 상단 안내 */}
-                  <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
-                    <p className="text-sm text-gray-700">{SEARCH_RESULTS_COPY.main}</p>
-                    <p className="text-xs text-gray-500 mt-1">{SEARCH_RESULTS_COPY.sub}</p>
-                  </div>
+                  {/* AI 분석 중일 때 로딩 표시 */}
+                  {isClassifying ? (
+                    <div className="bg-green-50 border border-green-200 p-6 rounded-xl text-center">
+                      <Loader2 size={24} className="animate-spin text-green-500 mx-auto mb-3" />
+                      <p className="text-sm text-green-700 font-medium">AI가 맞춤 공고를 분석하고 있어요</p>
+                      <p className="text-xs text-green-600 mt-1">
+                        분석이 완료되면 프로필에 맞는 공고만 추천해드려요
+                      </p>
+                    </div>
+                  ) : recommendedResults.length > 0 ? (
+                    <>
+                      {/* [마이크로카피] 추천 결과 리스트 상단 안내 */}
+                      <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
+                        <p className="text-sm text-gray-700">{SEARCH_RESULTS_COPY.main}</p>
+                        <p className="text-xs text-gray-500 mt-1">{SEARCH_RESULTS_COPY.sub}</p>
+                      </div>
 
                   <div className="space-y-3">
                     {recommendedResults.map((program) => {
@@ -1151,17 +1165,34 @@ export function SearchPage() {
                     })}
                   </div>
 
-                  {/* [마이크로카피] 하단 안내 (맞지 않는 공고가 보일 때) */}
-                  <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-                    <p className="text-sm text-gray-600">{MISMATCH_HELP_COPY.question}</p>
-                    <p className="text-xs text-gray-500 mt-1">{MISMATCH_HELP_COPY.suggestion}</p>
-                    <Link
-                      to="/profile"
-                      className="inline-flex items-center gap-1 mt-2 text-sm text-blue-600 hover:text-blue-700 font-medium"
-                    >
-                      {MISMATCH_HELP_COPY.cta}
-                    </Link>
-                  </div>
+                      {/* [마이크로카피] 하단 안내 (맞지 않는 공고가 보일 때) */}
+                      <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                        <p className="text-sm text-gray-600">{MISMATCH_HELP_COPY.question}</p>
+                        <p className="text-xs text-gray-500 mt-1">{MISMATCH_HELP_COPY.suggestion}</p>
+                        <Link
+                          to="/profile"
+                          className="inline-flex items-center gap-1 mt-2 text-sm text-blue-600 hover:text-blue-700 font-medium"
+                        >
+                          {MISMATCH_HELP_COPY.cta}
+                        </Link>
+                      </div>
+                    </>
+                  ) : (
+                    /* 분석 완료됐지만 추천 결과가 없을 때 */
+                    <div className="bg-gray-50 border border-gray-200 p-6 rounded-xl text-center">
+                      <AlertCircle size={24} className="text-gray-400 mx-auto mb-3" />
+                      <p className="text-sm text-gray-600 font-medium">현재 프로필 기준 추천 공고가 없어요</p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        프로필 정보를 더 구체적으로 입력하면 맞춤 추천을 받을 수 있어요
+                      </p>
+                      <Link
+                        to="/profile"
+                        className="inline-flex items-center gap-1 mt-3 text-sm text-blue-600 hover:text-blue-700 font-medium"
+                      >
+                        프로필 수정하기
+                      </Link>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1175,22 +1206,22 @@ export function SearchPage() {
                   </div>
                   <div>
                     <h3 className="font-semibold text-gray-900">
-                      {activeProfile && recommendedResults.length > 0 ? '기타 지원사업' : '전체 지원사업'}
+                      {activeProfile && !isClassifying && recommendedResults.length > 0 ? '기타 지원사업' : '전체 지원사업'}
                     </h3>
                     <p className="text-xs text-gray-500">
-                      {activeProfile && recommendedResults.length > 0
+                      {activeProfile && !isClassifying && recommendedResults.length > 0
                         ? '추천 기준 외 공고도 확인해보세요'
                         : '조건에 맞는 공고를 검토해보세요'
                       }
                     </p>
                   </div>
                   <span className="ml-auto text-sm font-medium text-gray-500">
-                    {activeProfile ? otherResults.length : sortedResults.length}건
+                    {activeProfile && !isClassifying ? otherResults.length : sortedResults.length}건
                   </span>
                 </div>
 
                 <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
-                  {(activeProfile ? otherResults : sortedResults).map((program) => (
+                  {(activeProfile && !isClassifying ? otherResults : sortedResults).map((program) => (
                     <div
                       key={program.id}
                       onClick={() => handleSelectProgram(program)}
