@@ -525,23 +525,32 @@ export function setIndustryClassToCache(announcement, classification) {
  * - API 실패 시 키워드 기반 fallback 분류
  *
  * @param {Object} announcement - 공고 객체
+ * @param {Object} options - 옵션
+ * @param {boolean} options.includeRegion - 지역 분류 포함 여부 (기본 false)
  * @returns {Promise<Object>} 분류 결과
  */
-export async function classifyAnnouncement(announcement) {
-  // 1. 캐시 확인
+export async function classifyAnnouncement(announcement, options = {}) {
+  const { includeRegion = false } = options
+
+  // 1. 캐시 확인 (지역 분류 요청 시 캐시에 regionRestriction이 있는지도 확인)
   const cached = getIndustryClassFromCache(announcement)
   if (cached) {
-    console.log(`[classifyAnnouncement] Cache hit: ${announcement.id}`)
-    return { success: true, data: cached, fromCache: true }
+    // 지역 분류를 요청했는데 캐시에 없으면 재호출 필요
+    if (includeRegion && !cached.regionRestriction) {
+      console.log(`[classifyAnnouncement] Cache hit but no region, re-classifying: ${announcement.id}`)
+    } else {
+      console.log(`[classifyAnnouncement] Cache hit: ${announcement.id}`)
+      return { success: true, data: cached, fromCache: true }
+    }
   }
 
   // 2. API 호출
   try {
-    console.log(`[classifyAnnouncement] Classifying: ${announcement.id}`)
+    console.log(`[classifyAnnouncement] Classifying: ${announcement.id} (includeRegion: ${includeRegion})`)
     const response = await fetch(`${API_BASE}/classifyAnnouncement`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ announcement }),
+      body: JSON.stringify({ announcement, includeRegion }),
     })
 
     const result = await response.json()
@@ -565,6 +574,30 @@ export async function classifyAnnouncement(announcement) {
       error: error.message,
     }
   }
+}
+
+/**
+ * 지역 분류만 별도로 요청 (패턴 매칭 실패 시 호출)
+ * - 기존 분류 결과가 있으면 지역만 추가로 분류
+ * - 비용 최적화: unknown 지역인 경우에만 호출
+ *
+ * @param {Object} announcement - 공고 객체
+ * @returns {Promise<Object>} 지역 분류 결과
+ */
+export async function classifyAnnouncementRegion(announcement) {
+  // 캐시에서 기존 분류 결과 확인
+  const cached = getIndustryClassFromCache(announcement)
+
+  // 이미 지역 분류가 있으면 반환
+  if (cached?.regionRestriction) {
+    console.log(`[classifyRegion] Already has region: ${announcement.id}`)
+    return { success: true, data: cached, fromCache: true }
+  }
+
+  // 지역 분류 포함하여 재분류
+  const result = await classifyAnnouncement(announcement, { includeRegion: true })
+
+  return result
 }
 
 /**

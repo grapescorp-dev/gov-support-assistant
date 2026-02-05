@@ -6,6 +6,30 @@ const anthropic = new Anthropic({
 })
 
 /**
+ * 지역 코드 목록 (AI 지역 분류용)
+ */
+const REGION_CODES = {
+  seoul: '서울',
+  gyeonggi: '경기',
+  incheon: '인천',
+  gangwon: '강원',
+  daejeon: '대전',
+  sejong: '세종',
+  chungbuk: '충북',
+  chungnam: '충남',
+  jeonbuk: '전북',
+  jeonnam: '전남',
+  gwangju: '광주',
+  gyeongbuk: '경북',
+  gyeongnam: '경남',
+  daegu: '대구',
+  busan: '부산',
+  ulsan: '울산',
+  jeju: '제주',
+  nationwide: '전국',
+}
+
+/**
  * 공고 분류를 위한 산업 분야 목록
  * - 프로필의 interests와 매칭될 수 있도록 설계
  */
@@ -76,7 +100,7 @@ export async function handler(event) {
   }
 
   try {
-    const { announcement } = JSON.parse(event.body)
+    const { announcement, includeRegion = false } = JSON.parse(event.body)
 
     if (!announcement || !announcement.title) {
       return {
@@ -97,8 +121,44 @@ export async function handler(event) {
 `.trim()
 
     const systemPrompt = `당신은 정부지원사업 공고를 분류하는 전문가입니다.
-공고 내용을 분석하여 가장 적합한 산업 분야를 판단합니다.
+공고 내용을 분석하여 가장 적합한 산업 분야${includeRegion ? '와 지역 제한 여부' : ''}를 판단합니다.
 반드시 JSON 형식으로만 응답하세요.`
+
+    // 지역 분류 옵션 (includeRegion이 true일 때만 추가)
+    const regionClassificationPrompt = includeRegion ? `
+
+또한, 이 공고의 지역 제한 여부를 판단해주세요:
+- 특정 지역(시/도) 소재 기업만 지원 가능한지
+- 전국 어디서나 지원 가능한지
+- 지역 제한을 판단할 수 없는지
+
+지역 코드 옵션:
+- seoul: 서울
+- gyeonggi: 경기
+- incheon: 인천
+- gangwon: 강원
+- daejeon: 대전
+- sejong: 세종
+- chungbuk: 충북
+- chungnam: 충남
+- jeonbuk: 전북
+- jeonnam: 전남
+- gwangju: 광주
+- gyeongbuk: 경북
+- gyeongnam: 경남
+- daegu: 대구
+- busan: 부산
+- ulsan: 울산
+- jeju: 제주
+- nationwide: 전국 (지역 무관)
+- unknown: 판단 불가` : ''
+
+    const regionResponseFormat = includeRegion ? `,
+  "regionRestriction": {
+    "type": "nationwide" | "restricted" | "unknown",
+    "region": "지역 코드 (restricted일 때만, 위 옵션 중 하나)",
+    "confidence": 0-100 사이의 확신도
+  }` : ''
 
     const userPrompt = `다음 정부지원사업 공고의 타겟 산업 분야를 분류해주세요.
 
@@ -129,6 +189,7 @@ ${announcementText}
 - social_enterprise: 사회적기업, 협동조합
 - general_startup: 분야 무관 창업지원 (누구나 가능)
 - general_sme: 분야 무관 중소기업지원 (누구나 가능)
+${regionClassificationPrompt}
 
 다음 JSON 형식으로 응답하세요:
 {
@@ -136,7 +197,7 @@ ${announcementText}
   "secondaryIndustry": "두 번째로 적합한 분야 코드 또는 null",
   "confidence": 0-100 사이의 확신도,
   "isGeneralProgram": true/false (분야 무관 범용 프로그램인지),
-  "targetType": "startup" | "sme" | "operator" | "individual" (대상 유형)
+  "targetType": "startup" | "sme" | "operator" | "individual" (대상 유형)${regionResponseFormat}
 }
 
 JSON만 출력하고 다른 텍스트는 포함하지 마세요.`
@@ -178,9 +239,34 @@ JSON만 출력하고 다른 텍스트는 포함하지 마세요.`
       }
     }
 
-    // 유효성 검증
+    // 유효성 검증 - 산업 분야
     if (!INDUSTRY_CATEGORIES[classification.primaryIndustry]) {
       classification.primaryIndustry = 'general_startup'
+    }
+
+    // 유효성 검증 - 지역 분류 (includeRegion이 true일 때만)
+    if (includeRegion && classification.regionRestriction) {
+      const regionRestriction = classification.regionRestriction
+
+      // type 검증
+      if (!['nationwide', 'restricted', 'unknown'].includes(regionRestriction.type)) {
+        regionRestriction.type = 'unknown'
+      }
+
+      // restricted일 때 region 검증
+      if (regionRestriction.type === 'restricted') {
+        if (!REGION_CODES[regionRestriction.region]) {
+          regionRestriction.region = null
+          regionRestriction.type = 'unknown'
+        }
+      }
+
+      // confidence 검증
+      if (typeof regionRestriction.confidence !== 'number' ||
+          regionRestriction.confidence < 0 ||
+          regionRestriction.confidence > 100) {
+        regionRestriction.confidence = 50
+      }
     }
 
     return {

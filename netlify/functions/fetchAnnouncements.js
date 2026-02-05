@@ -111,6 +111,120 @@ const mapToOurCategory = (lcategory) => {
 }
 
 // ==============================================
+// 6단계: API 메타데이터 지역 코드 매핑
+// ==============================================
+// 기업마당 API의 지역 코드(areaCd) 또는 지역명(areaNm)을 내부 지역 코드로 변환
+
+const AREA_CODE_TO_REGION = {
+  // 기업마당 API 지역 코드 (2자리 숫자)
+  '01': 'seoul',
+  '02': 'busan',
+  '03': 'daegu',
+  '04': 'incheon',
+  '05': 'gwangju',
+  '06': 'daejeon',
+  '07': 'ulsan',
+  '08': 'gyeonggi',
+  '09': 'gangwon',
+  '10': 'chungbuk',
+  '11': 'chungnam',
+  '12': 'jeonbuk',
+  '13': 'jeonnam',
+  '14': 'gyeongbuk',
+  '15': 'gyeongnam',
+  '16': 'jeju',
+  '17': 'sejong',
+  // 지역명 직접 매핑
+  '서울': 'seoul',
+  '서울특별시': 'seoul',
+  '부산': 'busan',
+  '부산광역시': 'busan',
+  '대구': 'daegu',
+  '대구광역시': 'daegu',
+  '인천': 'incheon',
+  '인천광역시': 'incheon',
+  '광주': 'gwangju',
+  '광주광역시': 'gwangju',
+  '대전': 'daejeon',
+  '대전광역시': 'daejeon',
+  '울산': 'ulsan',
+  '울산광역시': 'ulsan',
+  '경기': 'gyeonggi',
+  '경기도': 'gyeonggi',
+  '강원': 'gangwon',
+  '강원도': 'gangwon',
+  '강원특별자치도': 'gangwon',
+  '충북': 'chungbuk',
+  '충청북도': 'chungbuk',
+  '충남': 'chungnam',
+  '충청남도': 'chungnam',
+  '전북': 'jeonbuk',
+  '전라북도': 'jeonbuk',
+  '전북특별자치도': 'jeonbuk',
+  '전남': 'jeonnam',
+  '전라남도': 'jeonnam',
+  '경북': 'gyeongbuk',
+  '경상북도': 'gyeongbuk',
+  '경남': 'gyeongnam',
+  '경상남도': 'gyeongnam',
+  '제주': 'jeju',
+  '제주특별자치도': 'jeju',
+  '세종': 'sejong',
+  '세종특별자치시': 'sejong',
+  '전국': 'nationwide',
+  '지역무관': 'nationwide',
+}
+
+/**
+ * API 응답의 지역 정보를 내부 지역 코드로 변환
+ * @param {Object} item - API 응답 아이템
+ * @returns {Object|null} { regionCode, regionType } 또는 null
+ */
+const extractRegionFromApiMeta = (item) => {
+  // 1. areaCd (지역 코드) 확인
+  if (item.areaCd) {
+    const region = AREA_CODE_TO_REGION[item.areaCd]
+    if (region) {
+      return {
+        regionCode: region,
+        regionType: region === 'nationwide' ? 'nationwide' : 'restricted',
+        confidence: 'high',
+        source: 'areaCd',
+      }
+    }
+  }
+
+  // 2. areaNm (지역명) 확인
+  if (item.areaNm) {
+    const region = AREA_CODE_TO_REGION[item.areaNm]
+    if (region) {
+      return {
+        regionCode: region,
+        regionType: region === 'nationwide' ? 'nationwide' : 'restricted',
+        confidence: 'high',
+        source: 'areaNm',
+      }
+    }
+  }
+
+  // 3. jrsdInsttNm (관할기관명)에서 지역 추출 시도
+  if (item.jrsdInsttNm) {
+    for (const [key, value] of Object.entries(AREA_CODE_TO_REGION)) {
+      if (typeof key === 'string' && key.length > 1 && item.jrsdInsttNm.includes(key)) {
+        return {
+          regionCode: value,
+          regionType: value === 'nationwide' ? 'nationwide' : 'restricted',
+          confidence: 'medium',
+          source: 'jrsdInsttNm',
+        }
+      }
+    }
+  }
+
+  return null
+}
+
+// ==============================================
 // 공고 타입 및 태그 분류 시스템
 // ==============================================
 
@@ -497,6 +611,9 @@ const transformApiResponse = (items) => {
 
     const link = item.pblancUrl || item.rceptEngnHmpgUrl || item.link || ''
 
+    // 6단계: API 메타데이터에서 지역 정보 추출
+    const regionMeta = extractRegionFromApiMeta(item)
+
     const baseItem = {
       id: item.pblancId,
       title,
@@ -513,6 +630,8 @@ const transformApiResponse = (items) => {
       source: 'bizinfo_api',
       author: item.author,
       lcategory: rawLcategory,
+      // 6단계: 지역 메타데이터 추가
+      regionMeta: regionMeta || null,
       pubDate: item.creatPnttm || item.pubDate,
       reqstDt: rawReqst,
       hashTags: rawHashtags,

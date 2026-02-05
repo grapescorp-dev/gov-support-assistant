@@ -75,6 +75,118 @@ const REGION_KEYWORDS = {
   },
 }
 
+// ==============================================
+// 3단계: 기관명 → 지역 매핑 DB
+// ==============================================
+// 약어, 영문명, 특수 기관명을 지역과 매핑
+const ORGANIZATION_REGION_MAP = {
+  // 제주
+  'jdc': 'jeju',
+  '제주국제자유도시': 'jeju',
+  '제주창조경제혁신센터': 'jeju',
+  '제주테크노파크': 'jeju',
+  '제주산업진흥원': 'jeju',
+  '제주영상위원회': 'jeju',
+  '제주관광공사': 'jeju',
+
+  // 강원
+  '강원정보문화산업진흥원': 'gangwon',
+  '강원창조경제혁신센터': 'gangwon',
+  '강원테크노파크': 'gangwon',
+  'gwtp': 'gangwon',
+
+  // 경기
+  '경기콘텐츠진흥원': 'gyeonggi',
+  '경기창조경제혁신센터': 'gyeonggi',
+  '경기테크노파크': 'gyeonggi',
+  'ggtp': 'gyeonggi',
+  '판교': 'gyeonggi',
+
+  // 인천
+  '인천창조경제혁신센터': 'incheon',
+  '인천테크노파크': 'incheon',
+  '인천경제자유구역청': 'incheon',
+  'ifez': 'incheon',
+
+  // 대전
+  '대전창조경제혁신센터': 'daejeon',
+  '대전테크노파크': 'daejeon',
+  '대전정보문화산업진흥원': 'daejeon',
+
+  // 세종
+  '세종창조경제혁신센터': 'sejong',
+  '세종테크노파크': 'sejong',
+
+  // 충북
+  '충북창조경제혁신센터': 'chungbuk',
+  '충북테크노파크': 'chungbuk',
+  '충북산업진흥원': 'chungbuk',
+
+  // 충남
+  '충남창조경제혁신센터': 'chungnam',
+  '충남테크노파크': 'chungnam',
+  '충남산업진흥원': 'chungnam',
+
+  // 전북
+  '전북창조경제혁신센터': 'jeonbuk',
+  '전북테크노파크': 'jeonbuk',
+  '전북산업진흥원': 'jeonbuk',
+  'jbtp': 'jeonbuk',
+
+  // 전남
+  '전남창조경제혁신센터': 'jeonnam',
+  '전남테크노파크': 'jeonnam',
+  '전남정보문화산업진흥원': 'jeonnam',
+
+  // 광주
+  '광주창조경제혁신센터': 'gwangju',
+  '광주테크노파크': 'gwangju',
+  '광주정보문화산업진흥원': 'gwangju',
+  'gicon': 'gwangju',
+
+  // 경북
+  '경북창조경제혁신센터': 'gyeongbuk',
+  '경북테크노파크': 'gyeongbuk',
+  'gbtp': 'gyeongbuk',
+  '포항테크노파크': 'gyeongbuk',
+  '구미전자정보기술원': 'gyeongbuk',
+
+  // 경남
+  '경남창조경제혁신센터': 'gyeongnam',
+  '경남테크노파크': 'gyeongnam',
+  'gntp': 'gyeongnam',
+  '창원산업진흥원': 'gyeongnam',
+
+  // 대구
+  '대구창조경제혁신센터': 'daegu',
+  '대구테크노파크': 'daegu',
+  '대구디지털산업진흥원': 'daegu',
+  'dip': 'daegu',
+  'dgdip': 'daegu',
+
+  // 부산
+  '부산창조경제혁신센터': 'busan',
+  '부산테크노파크': 'busan',
+  '부산정보산업진흥원': 'busan',
+  'bipa': 'busan',
+  '부산영상위원회': 'busan',
+
+  // 울산
+  '울산창조경제혁신센터': 'ulsan',
+  '울산테크노파크': 'ulsan',
+  'utp': 'ulsan',
+
+  // 서울 (구 단위 기관)
+  '서울창조경제혁신센터': 'seoul',
+  '서울산업진흥원': 'seoul',
+  'sba': 'seoul',
+  '서울시': 'seoul',
+  '마포구': 'seoul',
+  '강남구': 'seoul',
+  '성동구': 'seoul',
+  '금천구': 'seoul',
+}
+
 // 모든 지역 키워드를 플랫하게 추출하는 헬퍼 함수
 function getAllKeywordsForRegion(regionData) {
   const keywords = [...regionData.main]
@@ -448,9 +560,30 @@ function detectExcludedRegions(text) {
 /**
  * 공고에서 지역 제한 정보 추출
  * @param {Object} announcement - 공고 객체
- * @returns {Object} { type: 'nationwide' | 'restricted' | 'excluded' | 'unknown', region?: string, excludedRegions?: string[], detectedCity?: string, detectedDistrict?: string }
+ * @returns {Object} { type: 'nationwide' | 'restricted' | 'excluded' | 'unknown', region?: string, excludedRegions?: string[], detectedCity?: string, detectedDistrict?: string, confidence?: string }
  */
 export function extractRegionRestriction(announcement) {
+  // [6단계] API 메타데이터에서 지역 정보가 있으면 최우선 사용
+  // regionMeta: { regionCode, regionType, confidence, source }
+  if (announcement.regionMeta) {
+    const { regionCode, regionType, confidence } = announcement.regionMeta
+
+    if (regionType === 'nationwide') {
+      return { type: 'nationwide', confidence: confidence || 'high', fromMeta: true }
+    }
+
+    if (regionType === 'restricted' && regionCode) {
+      return {
+        type: 'restricted',
+        region: regionCode,
+        regions: [regionCode],
+        regionLabel: REGION_NAMES[regionCode] || regionCode,
+        confidence: confidence || 'high',
+        fromMeta: true, // 메타데이터에서 추출됨을 표시
+      }
+    }
+  }
+
   // hashTags 제외 - 모든 지역이 나열되어 있어 신뢰도 낮음
   const text = [
     announcement.title || '',
@@ -462,6 +595,7 @@ export function extractRegionRestriction(announcement) {
     .toLowerCase()
 
   const titleText = (announcement.title || '').toLowerCase()
+  const originalTitle = announcement.title || ''
 
   // 0. 지역 제외 패턴 먼저 확인 (서울 제외, 수도권 제외 등)
   const excludedRegionsResult = detectExcludedRegions(text)
@@ -470,6 +604,7 @@ export function extractRegionRestriction(announcement) {
       type: 'excluded',
       excludedRegions: excludedRegionsResult.excludedRegions,
       excludedMessage: excludedRegionsResult.message,
+      confidence: 'high',
     }
   }
 
@@ -480,7 +615,33 @@ export function extractRegionRestriction(announcement) {
     text.includes('지역 무관') ||
     text.includes('전 지역')
   ) {
-    return { type: 'nationwide' }
+    return { type: 'nationwide', confidence: 'high' }
+  }
+
+  // [신규] 제목 앞부분에서 지역명 감지 (가장 신뢰도 높음)
+  // 예: "제주 2026년...", "강원 스타트업...", "전북특별자치도 2025년..."
+  // 제목 시작 부분(첫 20자)에서 지역명이 나오면 지역 제한 공고로 판단
+  const titlePrefix = originalTitle.substring(0, 30).toLowerCase()
+  for (const [regionKey, regionData] of Object.entries(REGION_KEYWORDS)) {
+    for (const kw of regionData.main) {
+      // 제목이 지역명으로 시작하거나, 제목 앞부분에 "지역명 + 년도/사업" 패턴
+      const prefixPatterns = [
+        new RegExp(`^${kw}`),                    // "제주 2026년..."
+        new RegExp(`^\\[?${kw}\\]?\\s`),         // "[제주] 2026년..." 또는 "제주 "
+        new RegExp(`^${kw}도?\\s*\\d{4}`),       // "제주도 2026", "강원 2025"
+        new RegExp(`^${kw}(특별자치도|특별자치시|특별시|광역시|도)`), // "제주특별자치도"
+      ]
+      if (prefixPatterns.some(pattern => pattern.test(titlePrefix))) {
+        const detectedDistrict = regionKey === 'seoul' ? detectSeoulDistrict(text) : undefined
+        return {
+          type: 'restricted',
+          region: regionKey,
+          detectedCity: undefined,
+          detectedDistrict,
+          confidence: 'high',
+        }
+      }
+    }
   }
 
   // 제목에서 [지역명] 패턴 확인 (예: "[강원] 2026년...", "[제주] 2026년...")
@@ -494,6 +655,7 @@ export function extractRegionRestriction(announcement) {
           region: regionKey,
           detectedCity: undefined,
           detectedDistrict,
+          confidence: 'high',
         }
       }
     }
@@ -523,6 +685,7 @@ export function extractRegionRestriction(announcement) {
           region: regionKey,
           detectedCity: undefined,
           detectedDistrict,
+          confidence: 'high',
         }
       }
     }
@@ -576,14 +739,32 @@ export function extractRegionRestriction(announcement) {
           region: regionKey,
           detectedCity: !regionData.main.includes(kw) ? kw : undefined,
           detectedDistrict,
+          confidence: 'high',
         }
       }
     }
   }
 
-  // 3단계: 기관명에 지역이 포함된 경우 - 지역 제한 공고로 처리
-  // (예: "강원테크노파크", "대구창조경제혁신센터", "김포시청")
+  // 3단계: 기관명 기반 지역 추론 (ORGANIZATION_REGION_MAP 우선 체크)
   const orgText = (announcement.organization || '').toLowerCase()
+
+  // 3-1: 약어/영문명/특수 기관명 매핑 먼저 체크 (예: JDC → 제주, SBA → 서울)
+  for (const [orgKeyword, regionKey] of Object.entries(ORGANIZATION_REGION_MAP)) {
+    if (orgText.includes(orgKeyword.toLowerCase())) {
+      const detectedDistrict = regionKey === 'seoul' ? detectSeoulDistrict(text) : undefined
+      return {
+        type: 'restricted',
+        region: regionKey,
+        detectedCity: undefined,
+        detectedDistrict,
+        confidence: 'high', // 명시적 매핑은 high confidence
+        matchedOrg: orgKeyword, // 디버깅용
+      }
+    }
+  }
+
+  // 3-2: 기존 로직 - 기관명에 지역 키워드가 포함된 경우
+  // (예: "강원테크노파크", "대구창조경제혁신센터", "김포시청")
   for (const [regionKey, regionData] of Object.entries(REGION_KEYWORDS)) {
     const allKeywords = getAllKeywordsForRegion(regionData)
 
@@ -596,12 +777,107 @@ export function extractRegionRestriction(announcement) {
           region: regionKey,
           detectedCity: !regionData.main.includes(kw) ? kw : undefined,
           detectedDistrict,
+          confidence: 'medium', // 기관명 기반은 medium (지역 기관이지만 전국 대상일 수 있음)
         }
       }
     }
   }
 
-  return { type: 'unknown' }
+  // [신규] 4단계: 제목/본문에 지역명이 단독으로 포함된 경우 (medium confidence)
+  // 위의 패턴에 매칭되지 않았지만 지역명이 명확히 포함된 경우
+  // 예: "제주 창업지원사업", "강원도 기업 지원"
+  for (const [regionKey, regionData] of Object.entries(REGION_KEYWORDS)) {
+    for (const kw of regionData.main) {
+      // 제목에 지역명이 포함되어 있고, 전국 대상이 아닌 경우
+      if (titleText.includes(kw)) {
+        // "전국", "지역무관" 등이 함께 있으면 제외
+        if (text.includes('전국') || text.includes('지역무관') || text.includes('지역 무관')) {
+          continue
+        }
+        const detectedDistrict = regionKey === 'seoul' ? detectSeoulDistrict(text) : undefined
+        return {
+          type: 'restricted',
+          region: regionKey,
+          detectedCity: undefined,
+          detectedDistrict,
+          confidence: 'medium', // 단순 키워드 포함은 medium
+        }
+      }
+    }
+  }
+
+  return { type: 'unknown', confidence: 'low' }
+}
+
+/**
+ * AI 분류 결과에서 지역 정보 추출 (4단계: AI 지역 분류 통합)
+ * - classifyAnnouncement API의 regionRestriction 결과를 extractRegionRestriction 형식으로 변환
+ *
+ * @param {Object} aiClassification - AI 분류 결과 (regionRestriction 포함)
+ * @returns {Object|null} extractRegionRestriction 형식의 결과 또는 null
+ */
+export function convertAiRegionToRestriction(aiClassification) {
+  if (!aiClassification?.regionRestriction) {
+    return null
+  }
+
+  const { type, region, confidence } = aiClassification.regionRestriction
+
+  // confidence 변환 (0-100 → high/medium/low)
+  let confidenceLevel = 'low'
+  if (confidence >= 80) {
+    confidenceLevel = 'high'
+  } else if (confidence >= 50) {
+    confidenceLevel = 'medium'
+  }
+
+  if (type === 'nationwide') {
+    return { type: 'nationwide', confidence: confidenceLevel }
+  }
+
+  if (type === 'restricted' && region) {
+    return {
+      type: 'restricted',
+      region,
+      regions: [region],
+      regionLabel: REGION_NAMES[region] || region,
+      confidence: confidenceLevel,
+      fromAI: true, // AI 분류 결과임을 표시
+    }
+  }
+
+  return { type: 'unknown', confidence: 'low' }
+}
+
+/**
+ * 지역 추출 (패턴 매칭 + AI 분류 통합)
+ * - 1차: 패턴 매칭으로 지역 추출 시도
+ * - 2차: unknown인 경우 AI 분류 결과 활용 (있으면)
+ *
+ * @param {Object} announcement - 공고 객체
+ * @param {Object} aiClassification - AI 분류 결과 (optional, regionRestriction 포함)
+ * @returns {Object} 지역 제한 정보
+ */
+export function extractRegionRestrictionWithAI(announcement, aiClassification = null) {
+  // 1차: 패턴 매칭
+  const patternResult = extractRegionRestriction(announcement)
+
+  // 패턴 매칭 성공 시 반환
+  if (patternResult.type !== 'unknown') {
+    return patternResult
+  }
+
+  // 2차: AI 분류 결과 활용 (있으면)
+  if (aiClassification?.regionRestriction) {
+    const aiResult = convertAiRegionToRestriction(aiClassification)
+    if (aiResult && aiResult.type !== 'unknown') {
+      console.log(`[extractRegionWithAI] Using AI result for ${announcement.id}: ${aiResult.region}`)
+      return aiResult
+    }
+  }
+
+  // 둘 다 unknown인 경우
+  return patternResult
 }
 
 /**
@@ -1983,8 +2259,15 @@ function checkDeadlineStatus(announcement) {
  * @returns {{ status: 'pass' | 'fail' | 'unknown', confidence: string, message?: string }}
  */
 function checkRegionEligibilityForHardFilter(profile, regionReq) {
-  if (!regionReq || regionReq.type === 'nationwide' || regionReq.type === 'unknown') {
+  // 전국 대상이면 무조건 통과
+  if (!regionReq || regionReq.type === 'nationwide') {
     return { status: 'pass', confidence: CONFIDENCE.LOW }
+  }
+
+  // [개선] unknown 타입 처리 - 프로필에 지역 정보가 있으면 unknown으로 표시
+  // (이전: 무조건 pass → 이제: 불확실함을 명시)
+  if (regionReq.type === 'unknown') {
+    return { status: 'unknown', confidence: CONFIDENCE.LOW }
   }
 
   // [추가] 지역 제외 타입 처리 (서울 제외, 수도권 제외 등)
@@ -2009,10 +2292,14 @@ function checkRegionEligibilityForHardFilter(profile, regionReq) {
 
     // 프로필 지역이 허용 목록에 없으면 불일치
     if (allowedRegions.length > 0 && !allowedRegions.includes(profileRegion)) {
+      // [개선] confidence에 따라 다르게 처리
+      // - high: 확실한 지역 제한 → fail
+      // - medium: 가능성 높은 지역 제한 → fail (but lower confidence message)
+      const reqConfidence = regionReq.confidence || CONFIDENCE.HIGH
       return {
         status: 'fail',
-        confidence: regionReq.confidence || CONFIDENCE.HIGH,
-        message: `${regionReq.regionLabel || '해당 지역'} 소재 기업만 지원 가능`,
+        confidence: reqConfidence,
+        message: `${regionReq.regionLabel || '해당 지역'} 소재 기업 대상 공고`,
       }
     }
 
@@ -2416,15 +2703,29 @@ export function applyHardFilter(profile, announcement, options = {}) {
     })
   }
 
-  // 5. 지역 체크 (HIGH confidence만 제외)
+  // 5. 지역 체크 (HIGH + MEDIUM confidence 제외)
+  // 지역은 다른 조건보다 명확한 제한이므로 medium도 제외 처리
   const regionResult = checkRegionEligibilityForHardFilter(profile, requirements.region)
-  if (regionResult.status === 'fail' && regionResult.confidence === CONFIDENCE.HIGH) {
+  if (regionResult.status === 'fail') {
+    // HIGH confidence: 확실한 지역 불일치 → 추천에서 제외
+    // MEDIUM confidence: 가능성 높은 지역 불일치 → 추천에서 제외하되 경고 메시지 다름
+    const isHighConfidence = regionResult.confidence === CONFIDENCE.HIGH
     failReasons.push({
       label: HARD_FILTER_LABELS.REGION_MISMATCH,
       message: regionResult.message,
-      confidence: CONFIDENCE.HIGH,
+      confidence: regionResult.confidence,
       source: 'region',
+      isRegionMismatch: true, // 지역 불일치 명시
     })
+
+    // MEDIUM confidence인 경우 unknownReasons에도 추가 (사용자에게 확인 권장)
+    if (!isHighConfidence) {
+      unknownReasons.push({
+        label: HARD_FILTER_LABELS.REGION_MISMATCH,
+        message: `${regionResult.message} (확인 필요)`,
+        reason: 'REGION_MEDIUM_CONFIDENCE',
+      })
+    }
   }
 
   // 6. 기업형태 체크 (HIGH confidence만 제외)
@@ -2472,14 +2773,18 @@ export function applyHardFilter(profile, announcement, options = {}) {
 
   // 9. 최종 결정 (Unknown은 기본 포함)
   const highConfidenceFails = failReasons.filter(r => r.confidence === CONFIDENCE.HIGH)
+  // [개선] 지역 불일치는 MEDIUM confidence도 제외 처리
+  const regionMismatchFails = failReasons.filter(r => r.isRegionMismatch && r.confidence === CONFIDENCE.MEDIUM)
 
-  if (highConfidenceFails.length > 0) {
+  if (highConfidenceFails.length > 0 || regionMismatchFails.length > 0) {
     // HIGH confidence 제외 사유 있음 → hardPass: false
+    // 또는 지역 불일치(MEDIUM)가 있음 → hardPass: false
+    const mainConfidence = highConfidenceFails.length > 0 ? CONFIDENCE.HIGH : CONFIDENCE.MEDIUM
     return {
       hardPass: false,
       hardFailReasons: failReasons,
       hardUnknownReasons: [],
-      hardConfidence: CONFIDENCE.HIGH,
+      hardConfidence: mainConfidence,
     }
   } else if (unknownReasons.length > 0) {
     // 미확인 사항 있음 → hardPass: null (기본 포함, 경고 표시)
