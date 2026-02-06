@@ -47,8 +47,174 @@ export async function searchAnnouncements(keyword, filters = {}) {
   return data.data
 }
 
-// AI 분석 요청
+// ==============================================
+// AI 맞춤분석 캐시
+// - 프로필 ID + 공고 ID 기반 캐싱
+// - 24시간 유효 (프로필 변경 시 결과가 달라지므로 짧게 설정)
+// ==============================================
+
+const ANALYSIS_CACHE_KEY_PREFIX = 'analysisCache:'
+const ANALYSIS_CACHE_EXPIRY_HOURS = 24
+
+/**
+ * 분석 캐시 키 생성
+ * - 공고 ID + 프로필 ID 조합으로 고유 키 생성
+ * @param {string} announcementId - 공고 ID
+ * @param {string} profileId - 프로필 ID
+ * @returns {string} 캐시 키
+ */
+function getAnalysisCacheKey(announcementId, profileId) {
+  return `${ANALYSIS_CACHE_KEY_PREFIX}${announcementId}:${profileId || 'no-profile'}`
+}
+
+/**
+ * localStorage에서 분석 결과 조회
+ * @param {string} announcementId - 공고 ID
+ * @param {string} profileId - 프로필 ID
+ * @returns {Object|null} 캐시된 분석 결과 또는 null
+ */
+export function getAnalysisFromCache(announcementId, profileId) {
+  try {
+    const key = getAnalysisCacheKey(announcementId, profileId)
+    const cached = localStorage.getItem(key)
+
+    if (!cached) return null
+
+    const entry = JSON.parse(cached)
+    const now = Date.now()
+    const createdAt = new Date(entry.createdAt).getTime()
+    const expiryMs = ANALYSIS_CACHE_EXPIRY_HOURS * 60 * 60 * 1000
+
+    // 만료 확인 (24시간)
+    if (now - createdAt > expiryMs) {
+      localStorage.removeItem(key)
+      return null
+    }
+
+    return entry.data
+  } catch {
+    return null
+  }
+}
+
+/**
+ * localStorage에 분석 결과 저장
+ * @param {string} announcementId - 공고 ID
+ * @param {string} profileId - 프로필 ID
+ * @param {Object} data - 분석 결과
+ */
+export function setAnalysisToCache(announcementId, profileId, data) {
+  try {
+    const key = getAnalysisCacheKey(announcementId, profileId)
+    const cacheEntry = {
+      createdAt: new Date().toISOString(),
+      data,
+    }
+    localStorage.setItem(key, JSON.stringify(cacheEntry))
+  } catch {
+    console.warn('[AnalysisCache] Failed to save cache')
+  }
+}
+
+/**
+ * 특정 프로필의 모든 분석 캐시 삭제 (프로필 수정 시 호출)
+ * @param {string} profileId - 프로필 ID
+ * @returns {number} 삭제된 항목 수
+ */
+export function clearAnalysisCacheForProfile(profileId) {
+  let count = 0
+  try {
+    const keys = Object.keys(localStorage)
+    const suffix = `:${profileId || 'no-profile'}`
+
+    keys.forEach(key => {
+      if (key.startsWith(ANALYSIS_CACHE_KEY_PREFIX) && key.endsWith(suffix)) {
+        localStorage.removeItem(key)
+        count++
+      }
+    })
+
+    if (count > 0) {
+      console.log(`[AnalysisCache] Cleared ${count} entries for profile: ${profileId}`)
+    }
+  } catch {
+    console.warn('[AnalysisCache] Failed to clear cache')
+  }
+  return count
+}
+
+/**
+ * 분석 캐시 전체 삭제
+ * @returns {number} 삭제된 항목 수
+ */
+export function clearAllAnalysisCache() {
+  let count = 0
+  try {
+    const keys = Object.keys(localStorage)
+    keys.forEach(key => {
+      if (key.startsWith(ANALYSIS_CACHE_KEY_PREFIX)) {
+        localStorage.removeItem(key)
+        count++
+      }
+    })
+    console.log(`[AnalysisCache] Cleared all ${count} entries`)
+  } catch {
+    console.warn('[AnalysisCache] Failed to clear cache')
+  }
+  return count
+}
+
+/**
+ * 분석 캐시 통계 조회
+ * @returns {Object} { total, valid, expired }
+ */
+export function getAnalysisCacheStats() {
+  const stats = { total: 0, valid: 0, expired: 0 }
+
+  try {
+    const keys = Object.keys(localStorage)
+    const now = Date.now()
+    const expiryMs = ANALYSIS_CACHE_EXPIRY_HOURS * 60 * 60 * 1000
+
+    keys.forEach(key => {
+      if (key.startsWith(ANALYSIS_CACHE_KEY_PREFIX)) {
+        stats.total++
+        try {
+          const entry = JSON.parse(localStorage.getItem(key))
+          const createdAt = new Date(entry.createdAt).getTime()
+
+          if (now - createdAt > expiryMs) {
+            stats.expired++
+          } else {
+            stats.valid++
+          }
+        } catch {
+          stats.expired++
+        }
+      }
+    })
+  } catch {
+    // ignore
+  }
+
+  return stats
+}
+
+// AI 분석 요청 (캐싱 적용)
 export async function analyzeProgram(announcement, profile) {
+  const announcementId = announcement?.id
+  const profileId = profile?.id
+
+  // 1. 캐시 확인
+  if (announcementId) {
+    const cached = getAnalysisFromCache(announcementId, profileId)
+    if (cached) {
+      console.log(`[analyzeProgram] Cache hit: ${announcementId}`)
+      return cached
+    }
+  }
+
+  // 2. API 호출
   const response = await fetch(`${API_BASE}/analyze`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -59,6 +225,12 @@ export async function analyzeProgram(announcement, profile) {
 
   if (!data.success) {
     throw new Error(data.error || '분석 중 오류가 발생했습니다')
+  }
+
+  // 3. 캐시 저장
+  if (announcementId && data.data) {
+    setAnalysisToCache(announcementId, profileId, data.data)
+    console.log(`[analyzeProgram] Cached: ${announcementId}`)
   }
 
   return data.data

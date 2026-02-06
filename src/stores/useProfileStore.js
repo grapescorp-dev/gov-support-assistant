@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { clearAnalysisCacheForProfile } from '../api/announcements'
 
 // 빈 프로필 템플릿
 const createEmptyProfile = (name = '새 프로필') => ({
@@ -74,19 +75,26 @@ export const useProfileStore = create(
       },
 
       // 프로필 업데이트
-      updateProfile: (id, updates) =>
+      updateProfile: (id, updates) => {
+        // 프로필 변경 시 해당 프로필의 분석 캐시 무효화
+        clearAnalysisCacheForProfile(id)
+
         set((state) => ({
           profiles: state.profiles.map((p) =>
             p.id === id
               ? { ...p, ...updates, updatedAt: new Date().toISOString() }
               : p
           ),
-        })),
+        }))
+      },
 
       // 활성 프로필 업데이트 (편의 함수)
       updateActiveProfile: (updates) => {
         const state = get()
         if (state.activeProfileId) {
+          // 프로필 변경 시 해당 프로필의 분석 캐시 무효화
+          clearAnalysisCacheForProfile(state.activeProfileId)
+
           set((state) => ({
             profiles: state.profiles.map((p) =>
               p.id === state.activeProfileId
