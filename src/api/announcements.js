@@ -866,13 +866,17 @@ function classifyByKeywords(announcement) {
 }
 
 /**
- * 여러 공고를 배치로 분류 (병렬 처리, 동시성 제한)
+ * 여러 공고를 배치로 분류 (배치 API 사용으로 비용 절감)
+ * - 10개씩 묶어서 배치 API 호출
+ * - 캐시된 것은 스킵
+ * - API 실패 시 개별 분류로 fallback
+ *
  * @param {Object[]} announcements - 공고 배열
- * @param {number} concurrency - 동시 처리 수 (기본 5)
+ * @param {number} batchSize - 배치 크기 (기본 10, 최대 10)
  * @param {Function} onProgress - 진행률 콜백 (optional)
  * @returns {Promise<Map>} announcementId -> classification 매핑
  */
-export async function classifyAnnouncementsBatch(announcements, concurrency = 5, onProgress = null) {
+export async function classifyAnnouncementsBatch(announcements, batchSize = 10, onProgress = null) {
   const results = new Map()
   const uncached = []
 
@@ -892,19 +896,47 @@ export async function classifyAnnouncementsBatch(announcements, concurrency = 5,
     onProgress({ cached: results.size, total: announcements.length, processed: results.size })
   }
 
-  // 2. 캐시 안 된 것들 병렬 처리 (동시성 제한)
-  for (let i = 0; i < uncached.length; i += concurrency) {
-    const batch = uncached.slice(i, i + concurrency)
-    const batchResults = await Promise.all(
-      batch.map(ann => classifyAnnouncement(ann))
-    )
+  // 캐시 안 된 것이 없으면 바로 반환
+  if (uncached.length === 0) {
+    return results
+  }
 
-    // 결과 저장
-    batch.forEach((ann, idx) => {
-      if (batchResults[idx].success && batchResults[idx].data) {
-        results.set(ann.id, batchResults[idx].data)
+  // 2. 배치 API 호출 (10개씩 묶어서)
+  const actualBatchSize = Math.min(batchSize, 10)
+
+  for (let i = 0; i < uncached.length; i += actualBatchSize) {
+    const batch = uncached.slice(i, i + actualBatchSize)
+
+    try {
+      // 배치 API 호출
+      const response = await fetch(`${API_BASE}/classifyAnnouncementBatch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ announcements: batch }),
+      })
+
+      const result = await response.json()
+
+      if (result.success && result.data) {
+        // 결과 저장 및 캐시
+        result.data.forEach(classification => {
+          const ann = batch.find(a => a.id === classification.announcementId)
+          if (ann) {
+            results.set(classification.announcementId, classification)
+            setIndustryClassToCache(ann, classification)
+          }
+        })
+        console.log(`[classifyBatch] Batch API success: ${result.data.length} items`)
+      } else {
+        // 배치 API 실패 시 개별 분류로 fallback
+        console.warn('[classifyBatch] Batch API failed, falling back to individual classification')
+        await classifyBatchFallback(batch, results)
       }
-    })
+    } catch (error) {
+      console.error('[classifyBatch] Batch API error:', error)
+      // 에러 시 개별 분류로 fallback
+      await classifyBatchFallback(batch, results)
+    }
 
     if (onProgress) {
       onProgress({
@@ -916,6 +948,25 @@ export async function classifyAnnouncementsBatch(announcements, concurrency = 5,
   }
 
   return results
+}
+
+/**
+ * 배치 API 실패 시 개별 분류로 fallback
+ */
+async function classifyBatchFallback(batch, results) {
+  for (const ann of batch) {
+    try {
+      const result = await classifyAnnouncement(ann)
+      if (result.success && result.data) {
+        results.set(ann.id, result.data)
+      }
+    } catch {
+      // 개별 분류도 실패하면 키워드 기반 fallback
+      const fallback = classifyByKeywords(ann)
+      results.set(ann.id, fallback)
+      setIndustryClassToCache(ann, fallback)
+    }
+  }
 }
 
 /**

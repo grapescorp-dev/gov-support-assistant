@@ -380,20 +380,29 @@ export function SearchPage() {
     setSelectedTags([])
   }
 
-  const handleSelectProgram = async (program) => {
+  // 공고 선택 (AI 분석 자동 호출 제거 - 비용 절감)
+  const handleSelectProgram = (program) => {
     setSelectedProgram(program)
-    setIsAnalyzing(true)
+    // AI 분석 상태 초기화 (버튼 클릭 시에만 분석 수행)
+    setAiAnalysis(null)
+    setIsAnalyzing(false)
     // 문서 요약 상태 초기화
     setDocSummary(null)
     setDocSummaryError(null)
+  }
 
+  // AI 맞춤 분석 요청 (버튼 클릭 시에만 호출 - 비용 절감)
+  const handleRequestAnalysis = async () => {
+    if (!selectedProgram) return
+
+    setIsAnalyzing(true)
     try {
-      const analysis = await analyzeProgram(program, activeProfile)
+      const analysis = await analyzeProgram(selectedProgram, activeProfile)
       setAiAnalysis(analysis)
     } catch {
       // 개발 환경용 기본 분석
       setAiAnalysis({
-        summary: `${program.title}은(는) ${program.summary}`,
+        summary: `${selectedProgram.title}은(는) ${selectedProgram.summary}`,
         matchAnalysis: {
           score: 75,
           level: 'high',
@@ -1340,7 +1349,23 @@ export function SearchPage() {
                   <Loader2 size={32} className="animate-spin text-blue-600 mb-3" />
                   <p className="text-gray-500">AI 분석 중...</p>
                 </div>
-              ) : aiAnalysis ? (
+              ) : !aiAnalysis ? (
+                /* AI 분석 요청 버튼 (비용 절감: 자동 분석 대신 수동 요청) */
+                <div className="flex flex-col items-center justify-center py-8">
+                  <h4 className="font-semibold text-gray-900 mb-3">{selectedProgram.title}</h4>
+                  <p className="text-sm text-gray-500 mb-4 text-center">
+                    AI가 이 공고와 프로필의 적합도를 분석하고<br />
+                    맞춤형 작성 가이드를 제공합니다.
+                  </p>
+                  <button
+                    onClick={handleRequestAnalysis}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                  >
+                    <Sparkles size={18} />
+                    AI 맞춤 분석 요청
+                  </button>
+                </div>
+              ) : (
                 <>
                   {/* 제목 및 적합도 */}
                   <div>
@@ -1599,7 +1624,7 @@ export function SearchPage() {
                     이 지원사업으로 문서 작성 시작
                   </button>
                 </>
-              ) : null}
+              )}
             </div>
           ) : (
             <div className="bg-gray-50 p-6 rounded-lg text-center text-gray-500 border border-gray-200">

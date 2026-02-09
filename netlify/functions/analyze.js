@@ -86,120 +86,50 @@ export async function handler(event) {
       parsed = await fetchParsedFromMssDocs(announcement)
     }
 
-    // Hard Filter 결과 텍스트화 (v2)
-    let hardFilterText = ''
+    // =============================================
+    // 프롬프트 최적화: 토큰 사용량 50% 감소
+    // =============================================
+
+    // Hard Filter 결과 (간결하게)
+    let hfText = ''
     if (hardFilterResult) {
-      const { hardPass, hardFailReasons, hardUnknownReasons, hardConfidence } = hardFilterResult
-
-      hardFilterText = `
-## Hard Filter 자동 검증 결과
-- 판정: ${hardPass === true ? '통과 (적격)' : hardPass === false ? '제외 (부적격)' : '미확인 (수동 검토 필요)'}
-- 신뢰도: ${hardConfidence || 'unknown'}
-`
-
-      if (hardFailReasons && hardFailReasons.length > 0) {
-        hardFilterText += `- 제외 사유:\n${hardFailReasons.map(r => `  * [${r.label}] ${r.message} (신뢰도: ${r.confidence})`).join('\n')}\n`
+      const { hardPass, hardFailReasons } = hardFilterResult
+      const status = hardPass === true ? '적격' : hardPass === false ? '부적격' : '미확인'
+      hfText = `검증: ${status}`
+      if (hardFailReasons?.length > 0) {
+        hfText += ` (${hardFailReasons.map(r => r.label).join(', ')})`
       }
-
-      if (hardUnknownReasons && hardUnknownReasons.length > 0) {
-        hardFilterText += `- 미확인 사항:\n${hardUnknownReasons.map(r => `  * [${r.label}] ${r.message} (사유: ${r.reason})`).join('\n')}\n`
-      }
-
-      hardFilterText += `
-위 자동 검증 결과를 참고하되, 실제 공고 내용을 바탕으로 더 정확한 적합도 분석을 제공하세요.
-특히 "미확인" 상태인 경우, 공고 원문에서 지원자격 정보를 확인하여 분석에 반영하세요.
-`
     }
 
-    // 프로필 정보 텍스트화
+    // 프로필 (핵심만)
+    const pf = profile || {}
     const profileText = profile
-      ? `
-## 사용자 프로필
-- 서비스명: ${profile.serviceName || '미입력'}
-- 사업 개요: ${profile.businessOverview || '미입력'}
-- 목표 시장: ${profile.targetMarket || '미입력'}
-- 기업 형태: ${profile.companyType || '미입력'}
-- 업력: ${profile.businessAge || '미입력'}
-- 지역: ${profile.region || '미입력'}
-- 매출: ${profile.revenue || '미입력'}
-- 직원 수: ${profile.employees || '미입력'}
-- 보유 인증: ${profile.certifications?.length > 0 ? profile.certifications.join(', ') : '없음'}
-- 투자 단계: ${profile.investmentStage || '미입력'}
-- 관심 분야: ${profile.interests?.length > 0 ? profile.interests.join(', ') : '미입력'}
-`
-      : '프로필 정보 없음'
+      ? `프로필: ${pf.serviceName || '-'} | ${pf.companyType || '-'} | ${pf.businessAge || '-'} | ${pf.region || '-'} | 인증:${pf.certifications?.join(',') || '없음'}`
+      : ''
 
-    // 공고 정보 텍스트화 (parsed 정보 포함)
-    const announcementText = `
-## 공고 정보
-- 제목: ${announcement.title}
-- 기관: ${announcement.organization || '미입력'}
-- 지원금: ${announcement.budget || '미입력'}
-- 마감일: ${announcement.deadline || '미입력'}
-- 요약: ${announcement.summary || '미입력'}
-- 지원 자격: ${announcement.eligibility?.join(', ') || '미입력'}
-- 제출 서류: ${announcement.requirements?.join(', ') || '미입력'}
-- 평가 기준: ${announcement.evaluationCriteria?.join(', ') || '미입력'}
-- 카테고리: ${announcement.category?.join(', ') || '미입력'}
+    // 공고 정보 (간결하게)
+    const ann = announcement
+    const eligibility = ann.eligibility?.slice(0, 3).join('; ') || '-'
+    const parsedElig = parsed?.eligibilityText?.slice(0, 200) || ''
+    const parsedExcl = parsed?.exclusionText?.slice(0, 150) || ''
 
-## 문서에서 추출된 상세 정보 (MSS 공고)
-- 문서추출 지원자격: ${parsed?.eligibilityText || '미추출'}
-- 문서추출 필수요건: ${parsed?.mandatoryText || '미추출'}
-- 문서추출 제외조건: ${parsed?.exclusionText || '미추출'}
-- 상세태그: ${parsed?.tags?.join(', ') || '없음'}
-`
+    const announcementText = `공고: ${ann.title}
+기관: ${ann.organization || '-'} | 마감: ${ann.deadline || '-'} | 지원금: ${ann.budget || '-'}
+요약: ${(ann.summary || '').slice(0, 150)}
+자격: ${eligibility}${parsedElig ? `\n상세자격: ${parsedElig}` : ''}${parsedExcl ? `\n제외조건: ${parsedExcl}` : ''}`
 
-    const systemPrompt = `당신은 정부지원사업 전문 컨설턴트입니다.
-공고 정보와 사용자 프로필을 분석하여 맞춤형 조언을 제공합니다.
-특히 "문서에서 추출된 상세 정보"가 있다면, 이를 우선적으로 참고하여 지원자격/제외조건을 정확히 분석하세요.
-응답은 반드시 JSON 형식으로만 출력하세요.`
+    const systemPrompt = `정부지원사업 컨설턴트. 공고와 프로필 매칭 분석. JSON만 출력.`
 
-    const userPrompt = `다음 정부지원사업 공고와 사용자 프로필을 분석해주세요.
+    const userPrompt = `${announcementText}
+${profileText}${hfText ? `\n${hfText}` : ''}
 
-${announcementText}
-
-${profileText}
-${hardFilterText}
-다음 JSON 형식으로 응답해주세요:
-{
-  "summary": "공고 핵심 요약 (3-4문장으로 이 사업이 무엇인지, 누구에게 적합한지 설명)",
-  "matchAnalysis": {
-    "score": 0-100 사이 적합도 점수,
-    "level": "high" | "medium" | "low",
-    "reason": "이 프로필과 공고의 적합도 분석 (2-3문장). 문서에서 추출된 제외조건이 있다면 반드시 언급",
-    "strengths": ["이 프로필이 가진 강점 2-3개"],
-    "weaknesses": ["보완이 필요한 부분 또는 제외조건에 해당하는 항목 1-2개"]
-  },
-  "writingDirection": [
-    "사업계획서 작성 방향 제안 1",
-    "사업계획서 작성 방향 제안 2",
-    "사업계획서 작성 방향 제안 3",
-    "사업계획서 작성 방향 제안 4",
-    "사업계획서 작성 방향 제안 5"
-  ],
-  "keyPoints": [
-    "심사위원이 중요하게 볼 포인트 1",
-    "심사위원이 중요하게 볼 포인트 2",
-    "심사위원이 중요하게 볼 포인트 3"
-  ],
-  "tips": [
-    "합격을 위한 실전 팁 1",
-    "합격을 위한 실전 팁 2",
-    "합격을 위한 실전 팁 3"
-  ]
-}
-
-JSON만 출력하고 다른 텍스트는 포함하지 마세요.`
+JSON 응답:
+{"summary":"2-3문장 요약","matchAnalysis":{"score":0-100,"level":"high|medium|low","reason":"적합도 분석 1-2문장","strengths":["강점1","강점2"],"weaknesses":["약점1"]},"writingDirection":["방향1","방향2","방향3"],"keyPoints":["포인트1","포인트2","포인트3"],"tips":["팁1","팁2","팁3"]}`
 
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 1500,
-      messages: [
-        {
-          role: 'user',
-          content: userPrompt,
-        },
-      ],
+      max_tokens: 1000,  // 1500 → 1000 (출력 토큰 감소)
+      messages: [{ role: 'user', content: userPrompt }],
       system: systemPrompt,
     })
 

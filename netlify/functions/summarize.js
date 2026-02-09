@@ -349,44 +349,28 @@ const parseEligibilityFromText = (text) => {
  * 파싱된 구조화 데이터로 Claude 요약 생성
  */
 const generateSummaryWithClaude = async (announcement, extracted) => {
-  const systemPrompt = `당신은 정부지원사업 공고문 분석 전문가입니다.
-주어진 구조화된 정보를 바탕으로 핵심 요약을 작성합니다.
-응답은 반드시 JSON 형식으로만 출력하세요.`
+  // 비용 최적화: 간결한 프롬프트 + Haiku 모델 사용
+  const systemPrompt = `정부지원사업 공고 요약 전문가. JSON만 출력.`
 
-  const userPrompt = `다음 정부지원사업 공고의 파싱된 정보를 바탕으로 핵심 요약을 작성해주세요.
+  // 프롬프트 최적화: 불필요한 텍스트 제거, 핵심만 전달
+  const eligibilityText = extracted.eligibility.slice(0, 5).join('; ') || '없음'
+  const exclusionText = extracted.exclusion.slice(0, 3).join('; ') || '없음'
+  const mandatoryText = extracted.mandatory.slice(0, 3).join('; ') || '없음'
 
-## 공고 기본 정보
-- 제목: ${announcement.title || '미입력'}
-- 기관: ${announcement.organization || '미입력'}
-- 마감일: ${announcement.deadline || '미입력'}
+  const userPrompt = `공고 요약:
+제목: ${announcement.title || '-'}
+기관: ${announcement.organization || '-'}
+마감: ${announcement.deadline || '-'}
+자격: ${eligibilityText}
+제외: ${exclusionText}
+필수: ${mandatoryText}
 
-## 문서에서 추출된 정보
-
-### 지원자격
-${extracted.eligibility.length > 0 ? extracted.eligibility.map(e => `- ${e}`).join('\n') : '(추출되지 않음)'}
-
-### 제외조건
-${extracted.exclusion.length > 0 ? extracted.exclusion.map(e => `- ${e}`).join('\n') : '(추출되지 않음)'}
-
-### 필수요건
-${extracted.mandatory.length > 0 ? extracted.mandatory.map(e => `- ${e}`).join('\n') : '(추출되지 않음)'}
-
----
-위 정보를 바탕으로 다음 JSON 형식으로 응답해주세요:
-
-{
-  "summary": "6~10줄 분량의 핵심 요약. 이 사업의 목적, 주요 지원 대상, 핵심 자격요건, 주의사항을 포함하세요.",
-  "keyEligibility": ["가장 중요한 지원자격 조건 3~5개 (한 문장씩)"],
-  "keyExclusion": ["반드시 알아야 할 제외/제한 조건 2~3개"],
-  "keyMandatory": ["필수 제출서류 또는 필수 요건 2~3개"],
-  "recommendation": "이 공고에 지원하려는 기업을 위한 한 줄 조언"
-}
-
-JSON만 출력하고 다른 텍스트는 포함하지 마세요.`
+JSON 응답:
+{"summary":"3-5문장 핵심요약","keyEligibility":["자격1","자격2","자격3"],"keyExclusion":["제외1","제외2"],"keyMandatory":["필수1","필수2"],"recommendation":"한줄조언"}`
 
   const message = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 1000,
+    model: 'claude-3-5-haiku-20241022',  // 비용 절감: Sonnet → Haiku
+    max_tokens: 600,  // 출력 토큰 감소
     messages: [{ role: 'user', content: userPrompt }],
     system: systemPrompt,
   })
