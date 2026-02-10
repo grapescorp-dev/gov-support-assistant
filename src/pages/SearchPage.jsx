@@ -335,10 +335,10 @@ export function SearchPage() {
       const cacheStats = getIndustryClassCacheStats()
       console.log('[HybridMatching] 캐시 통계:', cacheStats)
 
-      // 배치 분류 실행 (동시성 3으로 제한)
+      // 배치 분류 실행 (10개씩 배치 처리)
       const classMap = await classifyAnnouncementsBatch(
         announcements,
-        3,
+        10,
         (progress) => {
           setClassificationProgress(progress)
           console.log('[HybridMatching] 진행률:', progress)
