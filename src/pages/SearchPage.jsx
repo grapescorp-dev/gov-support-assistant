@@ -992,8 +992,8 @@ export function SearchPage() {
                 </div>
               )}
 
-              {/* 공고 목록 */}
-              <div className="space-y-3 max-h-[calc(100vh-400px)] overflow-y-auto pr-1">
+              {/* 공고 목록 - 단일 스크롤 구조 (독립 스크롤 제거) */}
+              <div className="space-y-3">
                 {currentResults.map((program) => {
                   const badges = activeTab === 'recommended' ? getRecommendBadges(program) : []
                   const isRecommendedTab = activeTab === 'recommended'
@@ -1140,9 +1140,9 @@ export function SearchPage() {
           )}
         </div>
 
-        {/* AI 분석 패널 - 스크롤 시 고정 */}
+        {/* AI 분석 패널 - 스크롤 시 상단 헤더 아래에 고정 */}
         <div className="lg:col-span-2">
-          <div className="sticky top-[320px] space-y-4 max-h-[calc(100vh-340px)] overflow-y-auto">
+          <div className="sticky top-[280px] space-y-4">
             <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 bg-gray-50 py-2 sticky top-0 z-10">
               <Sparkles size={20} className="text-yellow-500" />
               AI 분석
