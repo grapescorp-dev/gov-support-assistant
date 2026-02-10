@@ -97,7 +97,7 @@ JSON 배열만 출력하세요.`
 
     const message = await anthropic.messages.create({
       model: 'claude-3-5-haiku-20241022',
-      max_tokens: 800,
+      max_tokens: 2000,  // 10개 공고 분류 응답을 위해 충분한 토큰 확보
       messages: [{ role: 'user', content: userPrompt }],
       system: systemPrompt,
     })
