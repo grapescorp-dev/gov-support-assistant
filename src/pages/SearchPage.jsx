@@ -24,11 +24,10 @@ import { CollapsibleTags } from '../components/CollapsibleTags'
 import {
   PROFILE_WEAK_SIGNAL_BANNER,
   SEARCH_RESULTS_COPY,
-  WHY_RECOMMENDED_COPY,
   MISMATCH_HELP_COPY,
   checkProfileSignalWeak,
 } from '../constants/microcopy'
-import { Search, Loader2, ExternalLink, Sparkles, Filter, Calendar, Building2, Tag, ArrowUpDown, UserCircle, TrendingUp, MapPin, AlertTriangle, Briefcase, CalendarDays, Info, FileText, AlertCircle, CheckCircle2, X, ChevronDown, Settings, Star, Clock, Eye, HelpCircle } from 'lucide-react'
+import { Search, Loader2, ExternalLink, Sparkles, Filter, Calendar, Building2, Tag, ArrowUpDown, UserCircle, TrendingUp, MapPin, AlertTriangle, Briefcase, CalendarDays, Info, FileText, AlertCircle, CheckCircle2, X, ChevronDown, Settings, Star, Clock, Eye } from 'lucide-react'
 
 // 맞춤 공고 필터링 기준 점수
 const MATCHING_THRESHOLD = 30
@@ -65,6 +64,22 @@ const SOURCE_FILTERS = [
   { value: 'kstartup', label: 'K-Startup', color: 'bg-green-100 text-green-700' },
   { value: 'mss_api', label: '중소벤처기업부', color: 'bg-purple-100 text-purple-700' },
 ]
+
+// 공고 유형 라벨 컴포넌트
+function AnnouncementTypeBadge({ type }) {
+  const config = {
+    funding: { label: '지원금/과제', color: 'bg-blue-100 text-blue-700', icon: Briefcase },
+    event: { label: '행사', color: 'bg-pink-100 text-pink-700', icon: CalendarDays },
+    info: { label: '안내', color: 'bg-gray-100 text-gray-600', icon: Info },
+  }
+  const { label, color, icon: Icon } = config[type] || config.info
+  return (
+    <span className={`text-xs font-medium px-2 py-0.5 rounded flex items-center gap-1 ${color}`}>
+      <Icon size={10} />
+      {label}
+    </span>
+  )
+}
 
 export function SearchPage() {
   const navigate = useNavigate()
@@ -105,6 +120,9 @@ export function SearchPage() {
   const [classificationProgress, setClassificationProgress] = useState({ cached: 0, total: 0, processed: 0 })
   const [classificationMap, setClassificationMap] = useState(new Map())
   const [useHybridMatching, setUseHybridMatching] = useState(true) // 하이브리드 매칭 사용 여부
+
+  // [탭 UI] 맞춤/전체 공고 탭 상태
+  const [activeTab, setActiveTab] = useState('recommended') // 'recommended' | 'all'
 
   // 필터가 적용되었는지 확인 (하나라도 선택되면 true)
   const hasActiveFilters = selectedTags.length > 0 || selectedCategory !== '전체' || selectedSource !== 'all'
@@ -481,17 +499,20 @@ export function SearchPage() {
   // - 데이터 필터링 로직 변경 없음
   // - 이미 계산된 sortedResults를 UI에서만 분리
   // ========================================
-  // [매칭 정확도 개선] 추천 공고는 eligible === true인 공고만 포함
+  // [매칭 정확도 개선] 추천 공고는 eligible === true이고 hardPass !== false인 공고만 포함
   const recommendedResults = useMemo(() => {
     if (!activeProfile) return []
-    return sortedResults.filter(p => p.eligible && p.matchingScore >= MATCHING_THRESHOLD)
+    return sortedResults.filter(p =>
+      p.eligible &&
+      p.matchingScore >= MATCHING_THRESHOLD &&
+      p.hardPass !== false  // 하드필터 통과 또는 unknown만 포함
+    )
   }, [sortedResults, activeProfile])
 
-  // [매칭 정확도 개선] 기타 공고: eligible이 false이거나 점수가 낮은 공고
-  const otherResults = useMemo(() => {
-    if (!activeProfile) return sortedResults
-    return sortedResults.filter(p => !p.eligible || p.matchingScore < MATCHING_THRESHOLD)
-  }, [sortedResults, activeProfile])
+  // 전체 공고 (필터 적용된 모든 공고)
+  const allResults = useMemo(() => {
+    return sortedResults
+  }, [sortedResults])
 
   // ========================================
   // [UX 개선] 프로필 정보 라벨 변환 헬퍼
@@ -548,425 +569,380 @@ export function SearchPage() {
     return checkProfileSignalWeak(activeProfile)
   }, [activeProfile])
 
-  // "왜 추천됐나요?" 토글 상태
-  const [showWhyRecommended, setShowWhyRecommended] = useState({})
-
-  const toggleWhyRecommended = (programId) => {
-    setShowWhyRecommended(prev => ({
-      ...prev,
-      [programId]: !prev[programId]
-    }))
-  }
+  // 현재 탭에 따른 결과
+  const currentResults = activeTab === 'recommended' ? recommendedResults : allResults
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-0">
       {/* ========================================
-          [하이브리드 매칭] AI 분류 진행 상태 표시
-          - AI 분석 중에는 맞춤 공고가 로딩 중임을 안내
+          [스크롤 시 고정되는 상단 영역]
+          - AI 분류 진행 상태
+          - 프로필 신호 부족 배너
+          - 프로필 요약
+          - 검색창
+          - 카테고리/필터
           ======================================== */}
-      {isClassifying && (
-        <div className="bg-indigo-50 border border-indigo-200 p-4 rounded-xl">
-          <div className="flex items-center gap-3">
-            <Loader2 size={20} className="text-indigo-500 animate-spin" />
-            <div className="flex-1">
-              <h3 className="font-semibold text-indigo-800">AI가 맞춤 공고를 분석하고 있어요</h3>
-              <p className="text-sm text-indigo-600 mt-1">
-                {classificationProgress.processed} / {classificationProgress.total}개 완료
-                {classificationProgress.cached > 0 && ` (캐시: ${classificationProgress.cached}개)`}
-              </p>
-              <p className="text-xs text-indigo-500 mt-1">
-                분석이 완료되면 맞춤형 공고가 표시됩니다. 잠시만 기다려주세요.
-              </p>
-              <div className="w-full bg-indigo-200 rounded-full h-2 mt-2">
-                <div
-                  className="bg-indigo-500 h-2 rounded-full transition-all duration-300"
-                  style={{ width: `${(classificationProgress.processed / classificationProgress.total) * 100}%` }}
-                />
+      <div className="sticky top-0 z-30 bg-gray-50 pb-4 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 border-b border-gray-200 shadow-sm">
+        {/* [하이브리드 매칭] AI 분류 진행 상태 표시 */}
+        {isClassifying && (
+          <div className="bg-indigo-50 border border-indigo-200 p-3 rounded-xl mb-3">
+            <div className="flex items-center gap-3">
+              <Loader2 size={18} className="text-indigo-500 animate-spin" />
+              <div className="flex-1">
+                <p className="text-sm font-medium text-indigo-800">
+                  AI가 맞춤 공고를 분석하고 있어요 ({classificationProgress.processed}/{classificationProgress.total})
+                </p>
+                <div className="w-full bg-indigo-200 rounded-full h-1.5 mt-1">
+                  <div
+                    className="bg-indigo-500 h-1.5 rounded-full transition-all duration-300"
+                    style={{ width: `${(classificationProgress.processed / classificationProgress.total) * 100}%` }}
+                  />
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* ========================================
-          [마이크로카피] 프로필 신호 부족 배너 (조건부)
-          ======================================== */}
-      {activeProfile && profileSignal.isWeak && (
-        <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl">
-          <div className="flex items-start gap-3">
-            <AlertTriangle size={20} className="text-amber-500 flex-shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <h3 className="font-semibold text-amber-800">{PROFILE_WEAK_SIGNAL_BANNER.title}</h3>
-              <p className="text-sm text-amber-700 mt-1">{PROFILE_WEAK_SIGNAL_BANNER.body}</p>
+        {/* [마이크로카피] 프로필 신호 부족 배너 (조건부) */}
+        {activeProfile && profileSignal.isWeak && (
+          <div className="bg-amber-50 border border-amber-200 p-3 rounded-xl mb-3">
+            <div className="flex items-center gap-3">
+              <AlertTriangle size={18} className="text-amber-500 flex-shrink-0" />
+              <div className="flex-1">
+                <p className="text-sm font-medium text-amber-800">{PROFILE_WEAK_SIGNAL_BANNER.title}</p>
+              </div>
+              <Link
+                to="/profile"
+                className="flex-shrink-0 bg-amber-500 text-white px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-amber-600 transition-colors"
+              >
+                {PROFILE_WEAK_SIGNAL_BANNER.cta}
+              </Link>
             </div>
-            <Link
-              to="/profile"
-              className="flex-shrink-0 bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-amber-600 transition-colors"
-            >
-              {PROFILE_WEAK_SIGNAL_BANNER.cta}
-            </Link>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* ========================================
-          [UX 개선] 페이지 헤더 - 의사결정 단계 강조
-          ======================================== */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">지원 가능한 공고 찾기</h2>
-          <p className="text-sm text-gray-500 mt-1">
-            내 상황에 맞는 공고를 빠르게 검토하고 지원을 결정하세요
-          </p>
-        </div>
-        <div className="text-sm text-gray-500">
-          {activeProfile && recommendedResults.length > 0 ? (
-            <>
-              추천 <span className="font-semibold text-green-600">{recommendedResults.length}</span>개
-              <span className="text-gray-400 mx-1">·</span>
-              전체 {sortedResults.length}개
-            </>
-          ) : (
-            <>총 <span className="font-semibold text-blue-600">{sortedResults.length}</span>개 공고</>
-          )}
-        </div>
-      </div>
-
-      {/* ========================================
-          [UX 개선 #1] 프로필 요약 영역 (프로필 설정된 경우)
-          - 현재 적용 중인 프로필 핵심 정보 표시
-          - 수정 버튼은 단순 네비게이션
-          ======================================== */}
-      {activeProfile ? (
-        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-4 rounded-xl border border-blue-200">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-2">
-                <UserCircle size={18} className="text-blue-600" />
-                <span className="font-semibold text-gray-900">
+        {/* 프로필 요약 영역 */}
+        {activeProfile ? (
+          <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-3 rounded-xl border border-blue-200 mb-3">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2 flex-wrap">
+                <UserCircle size={16} className="text-blue-600" />
+                <span className="font-medium text-gray-900 text-sm">
                   {activeProfile.serviceName || activeProfile.name || '내 프로필'}
                 </span>
-                <span className="text-xs text-gray-500">기준으로 검색 중</span>
-              </div>
-
-              {/* 프로필 핵심 정보 */}
-              <div className="flex flex-wrap gap-2 text-xs">
                 {activeProfile.companyType && (
-                  <span className="bg-white px-2 py-1 rounded border border-gray-200 text-gray-700">
+                  <span className="bg-white px-2 py-0.5 rounded border border-gray-200 text-gray-700 text-xs">
                     {getCompanyTypeLabel(activeProfile.companyType)}
                   </span>
                 )}
-                {activeProfile.businessAge && (
-                  <span className="bg-white px-2 py-1 rounded border border-gray-200 text-gray-700">
-                    업력 {getBusinessAgeLabel(activeProfile.businessAge)}
-                  </span>
-                )}
                 {activeProfile.region && (
-                  <span className="bg-white px-2 py-1 rounded border border-gray-200 text-gray-700 flex items-center gap-1">
+                  <span className="bg-white px-2 py-0.5 rounded border border-gray-200 text-gray-700 text-xs flex items-center gap-1">
                     <MapPin size={10} />
                     {getRegionLabel(activeProfile.region)}
                   </span>
                 )}
-                {getInterestLabels(activeProfile.interests).map((label, i) => (
-                  <span key={i} className="bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                {getInterestLabels(activeProfile.interests).slice(0, 2).map((label, i) => (
+                  <span key={i} className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs">
                     {label}
                   </span>
                 ))}
-                {activeProfile.interests?.length > 3 && (
-                  <span className="text-gray-400 px-1 py-1">+{activeProfile.interests.length - 3}</span>
-                )}
               </div>
-            </div>
-
-            <Link
-              to="/profile"
-              className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700 font-medium whitespace-nowrap"
-            >
-              <Settings size={14} />
-              수정
-            </Link>
-          </div>
-        </div>
-      ) : (
-        /* ========================================
-           [UX 개선] 프로필 미설정 안내 - 더 강조된 CTA
-           ======================================== */
-        <div className="bg-gradient-to-r from-yellow-50 to-orange-50 p-5 rounded-xl border border-yellow-200">
-          <div className="flex items-start gap-4">
-            <div className="w-12 h-12 bg-yellow-100 rounded-full flex items-center justify-center flex-shrink-0">
-              <UserCircle size={24} className="text-yellow-600" />
-            </div>
-            <div className="flex-1">
-              <h3 className="font-semibold text-gray-900 mb-1">프로필을 설정하면 맞춤 추천을 받을 수 있어요</h3>
-              <p className="text-sm text-gray-600 mb-3">
-                기업 형태, 업력, 지역, 관심 분야를 입력하면 지원 가능한 공고를 우선 추천해드립니다.
-              </p>
               <Link
                 to="/profile"
-                className="inline-flex items-center gap-2 bg-yellow-500 text-white px-4 py-2 rounded-lg hover:bg-yellow-600 transition-colors font-medium text-sm"
+                className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium whitespace-nowrap"
               >
-                <UserCircle size={16} />
-                프로필 설정하기
+                <Settings size={12} />
+                수정
               </Link>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* ========================================
-          [UX 개선 #5] 검색창 - placeholder 개선
-          ======================================== */}
-      <form onSubmit={handleSearch} className="flex gap-3">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
-          <input
-            type="text"
-            value={keyword}
-            onChange={(e) => setKeyword(e.target.value)}
-            placeholder="찾고 싶은 지원사업을 입력하세요 (예: AI 스타트업, 콘텐츠 제작, 수출 바우처)"
-            className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          />
-        </div>
-        <button
-          type="submit"
-          disabled={isLoading}
-          className="flex items-center gap-2 bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50"
-        >
-          {isLoading ? <Loader2 size={20} className="animate-spin" /> : <Search size={20} />}
-          검색
-        </button>
-      </form>
-
-      {/* 공고 타입 탭 */}
-      <div className="border-b border-gray-200">
-        <nav className="flex gap-1 -mb-px">
-          {ANNOUNCEMENT_TYPES.map(({ value, label, icon: Icon }) => (
-            <button
-              key={value}
-              onClick={() => handleTypeChange(value)}
-              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-                selectedType === value
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
-            >
-              {Icon && <Icon size={16} />}
-              {label}
-              <span className={`text-xs px-1.5 py-0.5 rounded-full ${
-                selectedType === value ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-500'
-              }`}>
-                {typeCounts[value] || 0}
-              </span>
-            </button>
-          ))}
-        </nav>
-      </div>
-
-      {/* 행사 하위 탭 (행사 탭 선택 시에만 표시) */}
-      {selectedType === 'event' && (
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm text-gray-500 mr-2">행사 유형:</span>
-          {EVENT_SUB_TABS.map(({ value, label }) => (
-            <button
-              key={value}
-              onClick={() => setSelectedEventSubTab(value)}
-              className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                selectedEventSubTab === value
-                  ? 'bg-pink-600 text-white'
-                  : 'bg-pink-50 text-pink-600 hover:bg-pink-100'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* ========================================
-          [UX 개선 #5] 정렬/필터 영역 통합
-          - 기본 정렬 옵션은 항상 표시
-          - 상세 필터는 접을 수 있게 구성
-          ======================================== */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3 rounded-lg border border-gray-200">
-        {/* 정렬 옵션 */}
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <ArrowUpDown size={16} className="text-gray-500" />
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-              className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="deadline">마감일순</option>
-              <option value="matching">매칭률순</option>
-            </select>
+        ) : (
+          <div className="bg-gradient-to-r from-yellow-50 to-orange-50 p-3 rounded-xl border border-yellow-200 mb-3">
+            <div className="flex items-center gap-3">
+              <UserCircle size={20} className="text-yellow-600" />
+              <p className="text-sm text-gray-700 flex-1">프로필을 설정하면 맞춤 추천을 받을 수 있어요</p>
+              <Link
+                to="/profile"
+                className="bg-yellow-500 text-white px-3 py-1.5 rounded-lg hover:bg-yellow-600 transition-colors font-medium text-sm"
+              >
+                프로필 설정
+              </Link>
+            </div>
           </div>
-          <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-600">
+        )}
+
+        {/* 검색창 */}
+        <form onSubmit={handleSearch} className="flex gap-2 mb-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
             <input
-              type="checkbox"
-              checked={showExpired}
-              onChange={(e) => setShowExpired(e.target.checked)}
-              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              type="text"
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
+              placeholder="지원사업 검색 (예: AI, 콘텐츠, 수출)"
+              className="w-full pl-9 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
             />
-            마감 포함
-          </label>
-        </div>
-
-        {/* 상세 필터 토글 버튼 */}
-        <button
-          onClick={() => setIsFilterExpanded(!isFilterExpanded)}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-            hasActiveFilters
-              ? 'bg-blue-100 text-blue-700 hover:bg-blue-200'
-              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-          }`}
-        >
-          <Filter size={14} />
-          상세 필터
-          {hasActiveFilters && (
-            <span className="bg-blue-600 text-white text-xs px-1.5 py-0.5 rounded-full">
-              {(selectedTags.length > 0 ? 1 : 0) + (selectedCategory !== '전체' ? 1 : 0) + (selectedSource !== 'all' ? 1 : 0)}
-            </span>
-          )}
-          <ChevronDown size={14} className={`transition-transform ${isFilterExpanded ? 'rotate-180' : ''}`} />
-        </button>
-      </div>
-
-      {/* 상세 필터 영역 (접기/펼치기) */}
-      {isFilterExpanded && (
-        <div className="space-y-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-          {/* 태그 필터 (대상/지원유형 중심) */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <Tag size={14} className="text-gray-500" />
-                <span className="text-sm font-medium text-gray-700">대상/지원유형</span>
-                {selectedTags.length > 0 && (
-                  <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">
-                    {selectedTags.length}개
-                  </span>
-                )}
-              </div>
-              {selectedTags.length > 0 && (
-                <button
-                  onClick={clearTagFilters}
-                  className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
-                >
-                  <X size={12} />
-                  초기화
-                </button>
-              )}
-            </div>
-            <div className="space-y-2">
-              {Object.entries(TAG_FILTER_GROUPS).map(([group, tags]) => (
-                <div key={group} className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-xs text-gray-400 w-16 flex-shrink-0">{group}</span>
-                  {tags.map((tag) => (
-                    <button
-                      key={tag}
-                      onClick={() => toggleTagFilter(tag)}
-                      className={`text-xs px-2 py-1 rounded-full border transition-colors ${
-                        selectedTags.includes(tag)
-                          ? 'bg-blue-600 text-white border-blue-600'
-                          : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'
-                      }`}
-                    >
-                      {tag}
-                    </button>
-                  ))}
-                </div>
-              ))}
-            </div>
           </div>
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="flex items-center gap-1.5 bg-blue-600 text-white px-4 py-2.5 rounded-lg hover:bg-blue-700 transition-colors font-medium disabled:opacity-50 text-sm"
+          >
+            {isLoading ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
+            검색
+          </button>
+        </form>
 
-          {/* 관심분야/카테고리 필터 */}
-          <div className="pt-3 border-t border-gray-200">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <Briefcase size={14} className="text-gray-500" />
-                <span className="text-sm font-medium text-gray-700">관심분야</span>
-                {selectedCategory !== '전체' && (
-                  <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">
-                    {INTERESTS.find(i => i.value === selectedCategory)?.label || selectedCategory}
-                  </span>
-                )}
-              </div>
-              {selectedCategory !== '전체' && (
-                <button
-                  onClick={() => handleCategoryChange('전체')}
-                  className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
-                >
-                  <X size={12} />
-                  초기화
-                </button>
-              )}
-            </div>
-
-            <div className="flex flex-wrap gap-1.5 mb-2">
+        {/* 공고 타입 탭 */}
+        <div className="border-b border-gray-200 mb-3">
+          <nav className="flex gap-1 -mb-px">
+            {ANNOUNCEMENT_TYPES.map(({ value, label, icon: Icon }) => (
               <button
-                onClick={() => handleCategoryChange('전체')}
-                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                  selectedCategory === '전체'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-white text-gray-600 border border-gray-300 hover:border-blue-400'
+                key={value}
+                onClick={() => handleTypeChange(value)}
+                className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+                  selectedType === value
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                 }`}
               >
-                전체
+                {Icon && <Icon size={14} />}
+                {label}
+                <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                  selectedType === value ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-500'
+                }`}>
+                  {typeCounts[value] || 0}
+                </span>
               </button>
-            </div>
+            ))}
+          </nav>
+        </div>
 
-            <div className="space-y-2">
-              {['기술', '산업'].map(group => (
-                <div key={group} className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-xs text-gray-400 w-14 flex-shrink-0">{group}</span>
-                  {INTERESTS.filter(i => i.group === group).map(interest => (
-                    <button
-                      key={interest.value}
-                      onClick={() => handleCategoryChange(interest.value)}
-                      className={`px-2 py-1 rounded-full text-xs font-medium transition-colors ${
-                        selectedCategory === interest.value
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-white text-gray-600 border border-gray-300 hover:border-blue-400 hover:text-blue-600'
-                      }`}
-                    >
-                      {interest.label}
-                    </button>
-                  ))}
-                </div>
-              ))}
+        {/* 행사 하위 탭 (행사 탭 선택 시에만 표시) */}
+        {selectedType === 'event' && (
+          <div className="flex items-center gap-2 flex-wrap mb-3">
+            <span className="text-xs text-gray-500">행사 유형:</span>
+            {EVENT_SUB_TABS.map(({ value, label }) => (
+              <button
+                key={value}
+                onClick={() => setSelectedEventSubTab(value)}
+                className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                  selectedEventSubTab === value
+                    ? 'bg-pink-600 text-white'
+                    : 'bg-pink-50 text-pink-600 hover:bg-pink-100'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* 정렬/필터 영역 */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-white p-2 rounded-lg border border-gray-200">
+          {/* 정렬 옵션 */}
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5">
+              <ArrowUpDown size={14} className="text-gray-500" />
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                className="px-2 py-1 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="deadline">마감일순</option>
+                <option value="matching">매칭률순</option>
+              </select>
             </div>
+            <label className="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600">
+              <input
+                type="checkbox"
+                checked={showExpired}
+                onChange={(e) => setShowExpired(e.target.checked)}
+                className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              마감 포함
+            </label>
           </div>
 
-          {/* 소스 필터 */}
-          <div className="pt-3 border-t border-gray-200">
-            <div className="flex items-center gap-2 flex-wrap">
-              <Building2 size={14} className="text-gray-500" />
-              <span className="text-sm font-medium text-gray-700 mr-2">소스</span>
-              {SOURCE_FILTERS.map(({ value, label }) => (
+          {/* 상세 필터 토글 버튼 */}
+          <button
+            onClick={() => setIsFilterExpanded(!isFilterExpanded)}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              hasActiveFilters
+                ? 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            <Filter size={12} />
+            상세 필터
+            {hasActiveFilters && (
+              <span className="bg-blue-600 text-white text-xs px-1.5 py-0.5 rounded-full">
+                {(selectedTags.length > 0 ? 1 : 0) + (selectedCategory !== '전체' ? 1 : 0) + (selectedSource !== 'all' ? 1 : 0)}
+              </span>
+            )}
+            <ChevronDown size={12} className={`transition-transform ${isFilterExpanded ? 'rotate-180' : ''}`} />
+          </button>
+        </div>
+
+        {/* 상세 필터 영역 (접기/펼치기) */}
+        {isFilterExpanded && (
+          <div className="space-y-3 p-3 bg-gray-50 rounded-lg border border-gray-200 mt-2">
+            {/* 태그 필터 (대상/지원유형 중심) */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-1.5">
+                  <Tag size={12} className="text-gray-500" />
+                  <span className="text-xs font-medium text-gray-700">대상/지원유형</span>
+                </div>
+                {selectedTags.length > 0 && (
+                  <button
+                    onClick={clearTagFilters}
+                    className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-0.5"
+                  >
+                    <X size={10} />
+                    초기화
+                  </button>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                {Object.entries(TAG_FILTER_GROUPS).map(([group, tags]) => (
+                  <div key={group} className="flex items-center gap-1 flex-wrap">
+                    <span className="text-xs text-gray-400 w-14 flex-shrink-0">{group}</span>
+                    {tags.map((tag) => (
+                      <button
+                        key={tag}
+                        onClick={() => toggleTagFilter(tag)}
+                        className={`text-xs px-1.5 py-0.5 rounded-full border transition-colors ${
+                          selectedTags.includes(tag)
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'
+                        }`}
+                      >
+                        {tag}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* 관심분야/카테고리 필터 */}
+            <div className="pt-2 border-t border-gray-200">
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-1.5">
+                  <Briefcase size={12} className="text-gray-500" />
+                  <span className="text-xs font-medium text-gray-700">관심분야</span>
+                </div>
+                {selectedCategory !== '전체' && (
+                  <button
+                    onClick={() => handleCategoryChange('전체')}
+                    className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-0.5"
+                  >
+                    <X size={10} />
+                    초기화
+                  </button>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
                 <button
-                  key={value}
-                  onClick={() => setSelectedSource(value)}
-                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                    selectedSource === value
-                      ? 'bg-gray-800 text-white'
-                      : 'bg-white text-gray-600 border border-gray-300 hover:bg-gray-100'
+                  onClick={() => handleCategoryChange('전체')}
+                  className={`px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${
+                    selectedCategory === '전체'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-white text-gray-600 border border-gray-300 hover:border-blue-400'
                   }`}
                 >
-                  {label}
+                  전체
                 </button>
-              ))}
+                {['기술', '산업'].map(group => (
+                  <div key={group} className="flex items-center gap-1 flex-wrap">
+                    <span className="text-xs text-gray-400 w-12 flex-shrink-0">{group}</span>
+                    {INTERESTS.filter(i => i.group === group).map(interest => (
+                      <button
+                        key={interest.value}
+                        onClick={() => handleCategoryChange(interest.value)}
+                        className={`px-1.5 py-0.5 rounded-full text-xs font-medium transition-colors ${
+                          selectedCategory === interest.value
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-white text-gray-600 border border-gray-300 hover:border-blue-400 hover:text-blue-600'
+                        }`}
+                      >
+                        {interest.label}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* 소스 필터 */}
+            <div className="pt-2 border-t border-gray-200">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <Building2 size={12} className="text-gray-500" />
+                <span className="text-xs font-medium text-gray-700 mr-1">소스</span>
+                {SOURCE_FILTERS.map(({ value, label }) => (
+                  <button
+                    key={value}
+                    onClick={() => setSelectedSource(value)}
+                    className={`px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${
+                      selectedSource === value
+                        ? 'bg-gray-800 text-white'
+                        : 'bg-white text-gray-600 border border-gray-300 hover:bg-gray-100'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
-      <div className="grid lg:grid-cols-5 gap-6">
-        {/* ========================================
-            [UX 개선 #2] 검색 결과 목록 - 섹션 분리
-            (A) 내 기준 추천 공고
-            (B) 전체 지원사업 공고
-            ======================================== */}
-        <div className="lg:col-span-3 space-y-6">
+      {/* ========================================
+          메인 콘텐츠 영역
+          ======================================== */}
+      <div className="grid lg:grid-cols-5 gap-6 pt-4">
+        {/* 검색 결과 목록 */}
+        <div className="lg:col-span-3 space-y-4">
+          {/* 맞춤/전체 탭 */}
+          {activeProfile && (
+            <div className="flex border-b border-gray-200">
+              <button
+                onClick={() => setActiveTab('recommended')}
+                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+                  activeTab === 'recommended'
+                    ? 'border-green-500 text-green-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <Star size={16} />
+                맞춤 공고
+                <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                  activeTab === 'recommended' ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-500'
+                }`}>
+                  {isClassifying ? <Loader2 size={12} className="animate-spin" /> : recommendedResults.length}
+                </span>
+              </button>
+              <button
+                onClick={() => setActiveTab('all')}
+                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+                  activeTab === 'all'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <Briefcase size={16} />
+                전체 공고
+                <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                  activeTab === 'all' ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-500'
+                }`}>
+                  {allResults.length}
+                </span>
+              </button>
+            </div>
+          )}
 
           {isLoading ? (
             <div className="flex items-center justify-center py-12">
@@ -980,295 +956,99 @@ export function SearchPage() {
             </div>
           ) : (
             <>
-              {/* ========================================
-                  [섹션 A] 내 기준 추천 공고
-                  - AI 분석 완료 후에만 표시
-                  ======================================== */}
-              {activeProfile && (
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center">
-                      <Star size={16} className="text-green-600" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-gray-900">내 기준 추천 공고</h3>
-                      <p className="text-xs text-gray-500">
-                        {isClassifying ? 'AI 분석 중...' : `프로필 기준 매칭률 ${MATCHING_THRESHOLD}% 이상`}
-                      </p>
-                    </div>
-                    <span className="ml-auto text-sm font-medium text-green-600">
-                      {isClassifying ? (
-                        <Loader2 size={16} className="animate-spin" />
-                      ) : (
-                        `${recommendedResults.length}건`
-                      )}
-                    </span>
-                  </div>
-
-                  {/* AI 분석 중일 때 로딩 표시 */}
-                  {isClassifying ? (
-                    <div className="bg-green-50 border border-green-200 p-6 rounded-xl text-center">
-                      <Loader2 size={24} className="animate-spin text-green-500 mx-auto mb-3" />
-                      <p className="text-sm text-green-700 font-medium">AI가 맞춤 공고를 분석하고 있어요</p>
-                      <p className="text-xs text-green-600 mt-1">
-                        분석이 완료되면 프로필에 맞는 공고만 추천해드려요
-                      </p>
-                    </div>
-                  ) : recommendedResults.length > 0 ? (
-                    <>
-                      {/* [마이크로카피] 추천 결과 리스트 상단 안내 */}
-                      <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
-                        <p className="text-sm text-gray-700">{SEARCH_RESULTS_COPY.main}</p>
-                        <p className="text-xs text-gray-500 mt-1">{SEARCH_RESULTS_COPY.sub}</p>
-                      </div>
-
-                  <div className="space-y-3">
-                    {recommendedResults.map((program) => {
-                      const badges = getRecommendBadges(program)
-                      return (
-                        <div
-                          key={program.id}
-                          onClick={() => handleSelectProgram(program)}
-                          className={`bg-white p-4 rounded-xl border-2 cursor-pointer transition-all ${
-                            selectedProgram?.id === program.id
-                              ? 'border-green-500 ring-2 ring-green-100'
-                              : 'border-green-200 hover:border-green-300 hover:shadow-md'
-                          }`}
-                        >
-                          {/* [UX 개선 #3] 추천 배지 표시 */}
-                          {badges.length > 0 && (
-                            <div className="flex flex-wrap gap-1.5 mb-2">
-                              {badges.map((badge, i) => (
-                                <span key={i} className={`text-xs font-medium px-2 py-0.5 rounded-full flex items-center gap-1 ${badge.color}`}>
-                                  <badge.icon size={10} />
-                                  {badge.label}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-
-                          <div className="flex justify-between items-start mb-2">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2 flex-wrap mb-1">
-                                {program.type && program.type !== 'funding' && (
-                                  <span className={`text-xs font-medium px-2 py-0.5 rounded ${
-                                    program.type === 'event' ? 'bg-pink-100 text-pink-600' :
-                                    program.type === 'info' ? 'bg-gray-100 text-gray-600' :
-                                    'bg-gray-100 text-gray-600'
-                                  }`}>
-                                    {program.type === 'event' ? '행사' : program.type === 'info' ? '안내' : program.type}
-                                  </span>
-                                )}
-                                <span className={`text-xs font-medium px-2 py-0.5 rounded flex items-center gap-1 ${
-                                  program.matchingScore >= 80 ? 'bg-green-100 text-green-600' :
-                                  program.matchingScore >= 50 ? 'bg-yellow-100 text-yellow-600' :
-                                  'bg-gray-100 text-gray-600'
-                                }`}>
-                                  <TrendingUp size={12} />
-                                  {program.matchingScore}%
-                                </span>
-                              </div>
-                              <h4 className="font-semibold text-gray-900">{program.title}</h4>
-                            </div>
-                            <a
-                              href={getAnnouncementLink(program)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="text-gray-400 hover:text-blue-600 ml-2"
-                              title="공고 페이지로 이동"
-                            >
-                              <ExternalLink size={16} />
-                            </a>
-                          </div>
-
-                          <p className="text-sm text-gray-600 mb-3 line-clamp-2">
-                            {stripHtml(program.summary)}
-                          </p>
-
-                          <div className="flex flex-wrap gap-2 text-xs mb-2">
-                            <span className="flex items-center gap-1 bg-gray-100 px-2 py-1 rounded">
-                              <Building2 size={12} />
-                              {program.organization}
-                            </span>
-                            {program.budget && (
-                              <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded font-medium">
-                                {program.budget}
-                              </span>
-                            )}
-                            <span className="flex items-center gap-1 bg-red-100 text-red-700 px-2 py-1 rounded">
-                              <Calendar size={12} />
-                              {program.deadline}
-                            </span>
-                          </div>
-
-                          {program.tags && program.tags.length > 0 && (
-                            <CollapsibleTags tags={program.tags} maxLines={1} className="mb-2" />
-                          )}
-
-                          {program.isRegionMismatch && (
-                            <div className="flex items-center gap-1.5 mb-3 px-2 py-1 bg-orange-50 border border-orange-200 rounded text-xs text-orange-700">
-                              <AlertTriangle size={12} />
-                              <span>
-                                {getRegionName(program.regionRestriction.region, program.regionRestriction.detectedCity)} 지역 관련 공고
-                              </span>
-                            </div>
-                          )}
-
-                          {/* [Hard Filter v2] Unknown 상태 표시 - 지원자격 확인 필요 */}
-                          {program.hardPass === null && (
-                            <div className="flex items-center gap-1.5 mb-3 px-2 py-1 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
-                              <AlertCircle size={12} />
-                              <span>지원자격 확인 필요</span>
-                            </div>
-                          )}
-
-                          {/* [마이크로카피] "왜 추천됐나요?" 토글 */}
-                          <div className="mt-2">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                toggleWhyRecommended(program.id)
-                              }}
-                              className="flex items-center gap-1 text-xs text-gray-500 hover:text-blue-600 transition-colors"
-                            >
-                              <HelpCircle size={12} />
-                              왜 추천됐나요?
-                              <ChevronDown size={12} className={`transition-transform ${showWhyRecommended[program.id] ? 'rotate-180' : ''}`} />
-                            </button>
-                            {showWhyRecommended[program.id] && (
-                              <div className="mt-2 p-2 bg-blue-50 rounded-lg text-xs text-gray-600">
-                                <p className="font-medium text-gray-700 mb-1">{WHY_RECOMMENDED_COPY.title}</p>
-                                {WHY_RECOMMENDED_COPY.reasons.map((reason, i) => (
-                                  <p key={i}>{reason}</p>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-
-                          {/* [UX 개선 #4] 행동 유도 버튼 */}
-                          <div className="flex gap-2 pt-2 border-t border-gray-100">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                handleSelectProgram(program)
-                              }}
-                              className="flex-1 flex items-center justify-center gap-1.5 py-2 text-sm font-medium text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
-                            >
-                              <Eye size={14} />
-                              상세 검토
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                // stub: 관심 공고 저장 기능 (서버 연동 없음)
-                                console.log('[관심 공고] 저장:', program.id)
-                              }}
-                              className="flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
-                            >
-                              <Star size={14} />
-                            </button>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-
-                      {/* [마이크로카피] 하단 안내 (맞지 않는 공고가 보일 때) */}
-                      <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-                        <p className="text-sm text-gray-600">{MISMATCH_HELP_COPY.question}</p>
-                        <p className="text-xs text-gray-500 mt-1">{MISMATCH_HELP_COPY.suggestion}</p>
-                        <Link
-                          to="/profile"
-                          className="inline-flex items-center gap-1 mt-2 text-sm text-blue-600 hover:text-blue-700 font-medium"
-                        >
-                          {MISMATCH_HELP_COPY.cta}
-                        </Link>
-                      </div>
-                    </>
-                  ) : (
-                    /* 분석 완료됐지만 추천 결과가 없을 때 */
-                    <div className="bg-gray-50 border border-gray-200 p-6 rounded-xl text-center">
-                      <AlertCircle size={24} className="text-gray-400 mx-auto mb-3" />
-                      <p className="text-sm text-gray-600 font-medium">현재 프로필 기준 추천 공고가 없어요</p>
-                      <p className="text-xs text-gray-500 mt-1">
-                        프로필 정보를 더 구체적으로 입력하면 맞춤 추천을 받을 수 있어요
-                      </p>
-                      <Link
-                        to="/profile"
-                        className="inline-flex items-center gap-1 mt-3 text-sm text-blue-600 hover:text-blue-700 font-medium"
-                      >
-                        프로필 수정하기
-                      </Link>
-                    </div>
-                  )}
+              {/* AI 분석 중 안내 (맞춤 탭에서만) */}
+              {activeTab === 'recommended' && isClassifying && (
+                <div className="bg-green-50 border border-green-200 p-4 rounded-xl text-center">
+                  <Loader2 size={24} className="animate-spin text-green-500 mx-auto mb-2" />
+                  <p className="text-sm text-green-700 font-medium">AI가 맞춤 공고를 분석하고 있어요</p>
+                  <p className="text-xs text-green-600 mt-1">
+                    분석이 완료되면 프로필에 맞는 공고만 추천해드려요
+                  </p>
                 </div>
               )}
 
-              {/* ========================================
-                  [섹션 B] 전체 지원사업 공고
-                  ======================================== */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 bg-gray-100 rounded-lg flex items-center justify-center">
-                    <Briefcase size={16} className="text-gray-600" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-gray-900">
-                      {activeProfile && !isClassifying && recommendedResults.length > 0 ? '기타 지원사업' : '전체 지원사업'}
-                    </h3>
-                    <p className="text-xs text-gray-500">
-                      {activeProfile && !isClassifying && recommendedResults.length > 0
-                        ? '추천 기준 외 공고도 확인해보세요'
-                        : '조건에 맞는 공고를 검토해보세요'
-                      }
-                    </p>
-                  </div>
-                  <span className="ml-auto text-sm font-medium text-gray-500">
-                    {activeProfile && !isClassifying ? otherResults.length : sortedResults.length}건
-                  </span>
+              {/* 맞춤 탭 - 추천 공고 안내 */}
+              {activeTab === 'recommended' && !isClassifying && recommendedResults.length > 0 && (
+                <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
+                  <p className="text-sm text-gray-700">{SEARCH_RESULTS_COPY.main}</p>
+                  <p className="text-xs text-gray-500 mt-1">{SEARCH_RESULTS_COPY.sub}</p>
                 </div>
+              )}
 
-                <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
-                  {(activeProfile && !isClassifying ? otherResults : sortedResults).map((program) => (
+              {/* 맞춤 탭 - 추천 공고 없음 */}
+              {activeTab === 'recommended' && !isClassifying && recommendedResults.length === 0 && (
+                <div className="bg-gray-50 border border-gray-200 p-6 rounded-xl text-center">
+                  <AlertCircle size={24} className="text-gray-400 mx-auto mb-3" />
+                  <p className="text-sm text-gray-600 font-medium">현재 프로필 기준 추천 공고가 없어요</p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    전체 공고 탭에서 다른 공고를 확인하거나, 프로필 정보를 더 구체적으로 입력해보세요
+                  </p>
+                  <Link
+                    to="/profile"
+                    className="inline-flex items-center gap-1 mt-3 text-sm text-blue-600 hover:text-blue-700 font-medium"
+                  >
+                    프로필 수정하기
+                  </Link>
+                </div>
+              )}
+
+              {/* 공고 목록 */}
+              <div className="space-y-3 max-h-[calc(100vh-400px)] overflow-y-auto pr-1">
+                {currentResults.map((program) => {
+                  const badges = activeTab === 'recommended' ? getRecommendBadges(program) : []
+                  const isRecommendedTab = activeTab === 'recommended'
+
+                  return (
                     <div
                       key={program.id}
                       onClick={() => handleSelectProgram(program)}
-                      className={`bg-white p-4 rounded-lg border cursor-pointer transition-all ${
+                      className={`bg-white p-4 rounded-xl border-2 cursor-pointer transition-all ${
                         selectedProgram?.id === program.id
-                          ? 'border-blue-500 ring-2 ring-blue-100'
-                          : 'border-gray-200 hover:border-gray-300 hover:shadow-sm'
+                          ? isRecommendedTab
+                            ? 'border-green-500 ring-2 ring-green-100'
+                            : 'border-blue-500 ring-2 ring-blue-100'
+                          : isRecommendedTab
+                            ? 'border-green-200 hover:border-green-300 hover:shadow-md'
+                            : 'border-gray-200 hover:border-gray-300 hover:shadow-sm'
                       }`}
                     >
+                      {/* 추천 배지 (맞춤 탭에서만) */}
+                      {isRecommendedTab && badges.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 mb-2">
+                          {badges.map((badge, i) => (
+                            <span key={i} className={`text-xs font-medium px-2 py-0.5 rounded-full flex items-center gap-1 ${badge.color}`}>
+                              <badge.icon size={10} />
+                              {badge.label}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
                       <div className="flex justify-between items-start mb-2">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          {program.type && program.type !== 'funding' && (
-                            <span className={`text-xs font-medium px-2 py-0.5 rounded ${
-                              program.type === 'event' ? 'bg-pink-100 text-pink-600' :
-                              program.type === 'info' ? 'bg-gray-100 text-gray-600' :
-                              'bg-gray-100 text-gray-600'
-                            }`}>
-                              {program.type === 'event' ? '행사' : program.type === 'info' ? '안내' : program.type}
-                            </span>
-                          )}
-                          <h4 className="font-medium text-gray-900">{program.title}</h4>
-                          {activeProfile && (
-                            <span className={`text-xs font-medium px-2 py-0.5 rounded flex items-center gap-1 ${
-                              program.matchingScore >= 80 ? 'bg-green-100 text-green-600' :
-                              program.matchingScore >= 50 ? 'bg-yellow-100 text-yellow-600' :
-                              'bg-gray-100 text-gray-600'
-                            }`}>
-                              <TrendingUp size={12} />
-                              {program.matchingScore}%
-                            </span>
-                          )}
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 flex-wrap mb-1">
+                            {/* 공고 유형 배지 */}
+                            <AnnouncementTypeBadge type={program.type || 'funding'} />
+                            {/* 매칭률 */}
+                            {activeProfile && (
+                              <span className={`text-xs font-medium px-2 py-0.5 rounded flex items-center gap-1 ${
+                                program.matchingScore >= 80 ? 'bg-green-100 text-green-600' :
+                                program.matchingScore >= 50 ? 'bg-yellow-100 text-yellow-600' :
+                                'bg-gray-100 text-gray-600'
+                              }`}>
+                                <TrendingUp size={12} />
+                                {program.matchingScore}%
+                              </span>
+                            )}
+                          </div>
+                          <h4 className="font-semibold text-gray-900">{program.title}</h4>
                         </div>
                         <a
                           href={getAnnouncementLink(program)}
                           target="_blank"
                           rel="noopener noreferrer"
                           onClick={(e) => e.stopPropagation()}
-                          className="text-gray-400 hover:text-blue-600"
+                          className="text-gray-400 hover:text-blue-600 ml-2"
                           title="공고 페이지로 이동"
                         >
                           <ExternalLink size={16} />
@@ -1279,7 +1059,7 @@ export function SearchPage() {
                         {stripHtml(program.summary)}
                       </p>
 
-                      <div className="flex flex-wrap gap-2 text-xs">
+                      <div className="flex flex-wrap gap-2 text-xs mb-2">
                         <span className="flex items-center gap-1 bg-gray-100 px-2 py-1 rounded">
                           <Building2 size={12} />
                           {program.organization}
@@ -1296,47 +1076,73 @@ export function SearchPage() {
                       </div>
 
                       {program.tags && program.tags.length > 0 && (
-                        <CollapsibleTags tags={program.tags} maxLines={2} className="mt-2" />
-                      )}
-
-                      {(program.category || []).length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-2">
-                          {program.category.map((cat) => (
-                            <span key={cat} className="flex items-center gap-1 text-xs text-gray-500">
-                              <Tag size={10} />
-                              {cat}
-                            </span>
-                          ))}
-                        </div>
+                        <CollapsibleTags tags={program.tags} maxLines={1} className="mb-2" />
                       )}
 
                       {program.isRegionMismatch && (
-                        <div className="flex items-center gap-1.5 mt-2 px-2 py-1 bg-orange-50 border border-orange-200 rounded text-xs text-orange-700">
+                        <div className="flex items-center gap-1.5 mb-2 px-2 py-1 bg-orange-50 border border-orange-200 rounded text-xs text-orange-700">
                           <AlertTriangle size={12} />
                           <span>
-                            {getRegionName(program.regionRestriction.region, program.regionRestriction.detectedCity)} 지역 관련
+                            {getRegionName(program.regionRestriction.region, program.regionRestriction.detectedCity)} 지역 관련 공고
                           </span>
                         </div>
                       )}
 
-                      {/* [Hard Filter v2] Unknown 상태 표시 - 지원자격 확인 필요 */}
+                      {/* Hard Filter v2 상태 표시 */}
                       {program.hardPass === null && (
-                        <div className="flex items-center gap-1.5 mt-2 px-2 py-1 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
+                        <div className="flex items-center gap-1.5 mb-2 px-2 py-1 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
                           <AlertCircle size={12} />
                           <span>지원자격 확인 필요</span>
                         </div>
                       )}
+
+                      {/* 행동 유도 버튼 */}
+                      <div className="flex gap-2 pt-2 border-t border-gray-100">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleSelectProgram(program)
+                          }}
+                          className="flex-1 flex items-center justify-center gap-1.5 py-2 text-sm font-medium text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
+                        >
+                          <Eye size={14} />
+                          상세 검토
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            console.log('[관심 공고] 저장:', program.id)
+                          }}
+                          className="flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                        >
+                          <Star size={14} />
+                        </button>
+                      </div>
                     </div>
-                  ))}
-                </div>
+                  )
+                })}
               </div>
+
+              {/* 맞춤 탭 하단 안내 */}
+              {activeTab === 'recommended' && !isClassifying && recommendedResults.length > 0 && (
+                <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 mt-4">
+                  <p className="text-sm text-gray-600">{MISMATCH_HELP_COPY.question}</p>
+                  <p className="text-xs text-gray-500 mt-1">{MISMATCH_HELP_COPY.suggestion}</p>
+                  <Link
+                    to="/profile"
+                    className="inline-flex items-center gap-1 mt-2 text-sm text-blue-600 hover:text-blue-700 font-medium"
+                  >
+                    {MISMATCH_HELP_COPY.cta}
+                  </Link>
+                </div>
+              )}
             </>
           )}
         </div>
 
         {/* AI 분석 패널 - 스크롤 시 고정 */}
         <div className="lg:col-span-2">
-          <div className="sticky top-4 space-y-4 max-h-[calc(100vh-2rem)] overflow-y-auto">
+          <div className="sticky top-[320px] space-y-4 max-h-[calc(100vh-340px)] overflow-y-auto">
             <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 bg-gray-50 py-2 sticky top-0 z-10">
               <Sparkles size={20} className="text-yellow-500" />
               AI 분석

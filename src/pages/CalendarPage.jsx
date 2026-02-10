@@ -14,6 +14,7 @@ import {
   formatMonthName,
   extractRegionRestriction,
   getRegionName,
+  checkEligibility,
 } from '../utils/matchingScore'
 import {
   Calendar,
@@ -33,11 +34,37 @@ import {
   ExternalLink,
   Loader2,
   AlertTriangle,
+  Briefcase,
+  CalendarDays,
+  Info,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 // 맞춤 공고 필터링 기준 점수
 const MATCHING_THRESHOLD = 30
+
+/**
+ * 공고 유형 배지 컴포넌트
+ * - funding: 지원금/과제 (기본값)
+ * - event: 행사
+ * - info: 안내
+ */
+function AnnouncementTypeBadge({ type }) {
+  const config = {
+    funding: { label: '지원금/과제', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300', icon: Briefcase },
+    event: { label: '행사', color: 'bg-pink-100 text-pink-700 dark:bg-pink-900 dark:text-pink-300', icon: CalendarDays },
+    info: { label: '안내', color: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400', icon: Info },
+  }
+
+  const { label, color, icon: Icon } = config[type] || config.funding
+
+  return (
+    <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded ${color}`}>
+      <Icon size={12} />
+      {label}
+    </span>
+  )
+}
 
 const VIEWS = [
   { value: 'monthly', label: '월간' },
@@ -119,12 +146,18 @@ export function CalendarPage() {
         regionRestriction.type === 'restricted' &&
         regionRestriction.region !== activeProfile.region
 
+      // 자격 검사 (하드필터 결과 포함)
+      const eligibility = checkEligibility(activeProfile, announcement)
+
       return {
         ...announcement,
         matchingScore: calculateMatchingScore(activeProfile, announcement),
         dday: announcement.deadline ? calculateDday(announcement.deadline) : 999,
         regionRestriction,
         isRegionMismatch,
+        eligible: eligibility.eligible,
+        hardPass: eligibility.hardPass,
+        failReasons: eligibility.failReasons,
       }
     })
 
@@ -164,8 +197,13 @@ export function CalendarPage() {
     }
 
     // 맞춤 공고만 표시 (프로필 있고 토글 켜진 경우)
+    // ⚠️ 하드필터 적용: hardPass !== false 조건 추가 (SearchPage와 동일)
     if (showOnlyMatched && activeProfile) {
-      filtered = filtered.filter((a) => a.matchingScore >= MATCHING_THRESHOLD)
+      filtered = filtered.filter((a) =>
+        a.matchingScore >= MATCHING_THRESHOLD &&
+        a.eligible &&
+        a.hardPass !== false  // 하드필터 통과 또는 unknown만 포함
+      )
     }
 
     // 북마크만
@@ -530,8 +568,10 @@ function AnnouncementCard({ announcement, darkMode, isBookmarked, onBookmarkTogg
     >
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
-          {/* 상단: D-day + 매칭률 */}
-          <div className="flex items-center gap-2 mb-2">
+          {/* 상단: 공고유형 + D-day + 매칭률 */}
+          <div className="flex items-center gap-2 mb-2 flex-wrap">
+            {/* 공고 유형 배지 */}
+            <AnnouncementTypeBadge type={announcement.announcementType || 'funding'} />
             <span
               className={`text-xs font-bold px-2 py-0.5 rounded ${
                 isExpired
