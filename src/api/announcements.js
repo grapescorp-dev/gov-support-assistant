@@ -918,11 +918,11 @@ export async function classifyAnnouncementsBatch(announcements, batchSize = 10, 
       const result = await response.json()
 
       if (result.success && result.data) {
-        // 결과 저장 및 캐시
+        // 결과 저장 및 캐시 (ID 타입 불일치 방지를 위해 문자열 비교)
         result.data.forEach(classification => {
-          const ann = batch.find(a => a.id === classification.announcementId)
+          const ann = batch.find(a => String(a.id) === String(classification.announcementId))
           if (ann) {
-            results.set(classification.announcementId, classification)
+            results.set(ann.id, classification)  // 원본 공고의 id 사용
             setIndustryClassToCache(ann, classification)
           }
         })
