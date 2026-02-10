@@ -529,6 +529,7 @@ function detectExcludedRegions(text) {
   const nonCapitalPatterns = [
     /비수도권\s*(대상|지역|기업|한정|전용)/,
     /비수도권\s*(소재|에\s*위치)/,
+    /비수도권\s*(지방)?자치단체/,  // "비수도권 지방자치단체", "비수도권 자치단체"
     /지방\s*(소재|지역|기업)\s*(대상|한정|전용)/,
   ]
   for (const pattern of nonCapitalPatterns) {
@@ -2418,6 +2419,49 @@ function checkBusinessAgeEligibilityForHardFilter(profile, ageReq) {
 }
 
 /**
+ * 신청 대상 유형 체크 (지방자치단체, 공공기관 등 기업이 아닌 대상)
+ * 기업 사용자에게는 이러한 공고가 맞춤 추천되면 안 됨
+ * @param {Object} announcement - 공고
+ * @returns {{ excluded: boolean, targetType?: string, message?: string }}
+ */
+function checkTargetTypeForHardFilter(announcement) {
+  const fullText = [
+    announcement.title || '',
+    announcement.summary || '',
+    ...(announcement.eligibility || []),
+    ...(announcement.tags || []),
+  ].join(' ').toLowerCase()
+
+  // 신청 대상이 기업이 아닌 경우 (지방자치단체, 공공기관, 대학, 연구기관 등)
+  const nonBusinessTargetPatterns = [
+    // 지방자치단체 대상
+    { pattern: /신청\s*자격[^.]*지방\s*자치\s*단체/, type: 'government', label: '지방자치단체' },
+    { pattern: /신청\s*대상[^.]*지방\s*자치\s*단체/, type: 'government', label: '지방자치단체' },
+    { pattern: /지방\s*자치\s*단체\s*(대상|만|에\s*한|한정)/, type: 'government', label: '지방자치단체' },
+    { pattern: /지자체\s*(대상|만|에\s*한|한정|모집)/, type: 'government', label: '지방자치단체' },
+    { pattern: /기초\s*자치\s*단체/, type: 'government', label: '기초자치단체' },
+    { pattern: /광역\s*자치\s*단체/, type: 'government', label: '광역자치단체' },
+    // 공공기관 대상
+    { pattern: /공공\s*기관\s*(대상|만|에\s*한|한정|모집)/, type: 'public', label: '공공기관' },
+    // 대학/연구기관 대상 (기업 제외)
+    { pattern: /대학\s*(대상|만|에\s*한|한정)[^기업]/, type: 'university', label: '대학' },
+    { pattern: /연구\s*(기관|소)\s*(대상|만|에\s*한|한정)/, type: 'research', label: '연구기관' },
+  ]
+
+  for (const { pattern, type, label } of nonBusinessTargetPatterns) {
+    if (pattern.test(fullText)) {
+      return {
+        excluded: true,
+        targetType: type,
+        message: `${label} 대상 공고 (기업 신청 불가)`,
+      }
+    }
+  }
+
+  return { excluded: false }
+}
+
+/**
  * 업종 불일치 체크 (강한 패널티 레벨만 제외)
  * @param {Object} profile - 프로필
  * @param {Object} announcement - 공고
@@ -2496,6 +2540,11 @@ function detectSpecialProgramType(text) {
     /장비\s*이용\s*교육/,
     /실습\s*교육/,
     /기초\s*교육/,
+    /교육\s*대상[^.]*창업자/,  // "교육 대상: ~창업자"
+    /교육\s*대상[^.]*관계자/,  // "교육 대상: ~관계자"
+    /교육\s*프로그램\s*참가/,
+    /아카데미\s*(참가|모집|신청)/,
+    /부트캠프\s*(참가|모집|신청)/,
   ]
   for (const pattern of educationPatterns) {
     if (pattern.test(text)) {
@@ -2769,6 +2818,18 @@ export function applyHardFilter(profile, announcement, options = {}) {
         targetIndustry: industryResult.targetIndustry,
       })
     }
+  }
+
+  // 8.5 신청 대상 유형 체크 (지방자치단체, 공공기관 등 기업이 아닌 대상)
+  const targetTypeResult = checkTargetTypeForHardFilter(announcement)
+  if (targetTypeResult.excluded) {
+    failReasons.push({
+      label: HARD_FILTER_LABELS.TARGET_MISMATCH,
+      message: targetTypeResult.message,
+      confidence: CONFIDENCE.HIGH,
+      source: 'targetType',
+      targetType: targetTypeResult.targetType,
+    })
   }
 
   // 9. 최종 결정 (Unknown은 기본 포함)
