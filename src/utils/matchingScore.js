@@ -2545,6 +2545,9 @@ function detectSpecialProgramType(text) {
     /교육\s*프로그램\s*참가/,
     /아카데미\s*(참가|모집|신청)/,
     /부트캠프\s*(참가|모집|신청)/,
+    /부트캠프[^.]*교육\s*(신청|안내|모집)/,  // "부트캠프 ~ 교육 신청 안내"
+    /창업\s*부트캠프/,  // "창업부트캠프"
+    /교육\s*신청\s*안내/,  // "교육 신청 안내"
   ]
   for (const pattern of educationPatterns) {
     if (pattern.test(text)) {
@@ -2602,8 +2605,14 @@ function detectIndustryTargetMismatch(text, profileInterests, profileText) {
   const industryTargets = [
     {
       name: '바이오/헬스케어',
-      keywords: ['바이오', '헬스케어', '의료기기', '제약', '생명공학', '진단키트', '임상', '신약'],
-      matchPatterns: [/바이오\s*(기업|스타트업|벤처)/, /헬스케어\s*(기업|분야)/, /의료\s*기기\s*(기업|제조)/],
+      keywords: ['바이오', '헬스케어', '의료기기', '제약', '생명공학', '진단키트', '임상', '신약', '디지털헬스케어'],
+      matchPatterns: [
+        /바이오\s*(기업|스타트업|벤처|분야|전\s*분야|큐브)/,  // "바이오 전 분야", "바이오큐브"
+        /헬스케어\s*(기업|분야)/,
+        /의료\s*기기\s*(기업|제조)/,
+        /바이오[^.]*창업자/,  // "바이오 ~ 창업자"
+        /바이오[^.]*교육/,    // "바이오 ~ 교육"
+      ],
       allowedProfileKeywords: ['바이오', 'bio', 'healthcare', '의료', '헬스', '제약', '진단'],
       allowedInterests: ['bio', 'healthcare'],
     },

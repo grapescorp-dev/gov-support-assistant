@@ -157,7 +157,7 @@ export function SearchPage() {
 
       // hardFilterResult에서 hardPass 추출 (v2)
       const hardFilterResult = eligibilityResult.hardFilterResult
-      const hardPass = hardFilterResult?.hardPass // true, false, or null (unknown)
+      let hardPass = hardFilterResult?.hardPass // true, false, or null (unknown)
 
       // [하이브리드 매칭] AI 분류 결과 가져오기
       const classification = classificationMap.get(program.id) || getIndustryClassFromCache(program)
@@ -165,12 +165,37 @@ export function SearchPage() {
       // [하이브리드 매칭] 점수 계산
       let matchingScore
       let hybridBreakdown = null
+      let aiHardPassOverride = null // AI 분류로 인한 hardPass 오버라이드
 
       if (useHybridMatching && classification && activeProfile) {
         // 하이브리드 매칭 사용
         const hybridResult = calculateHybridMatchingScore(activeProfile, program, classification)
         matchingScore = hybridResult.score
         hybridBreakdown = hybridResult.breakdown
+
+        // ⭐ [옵션 A] AI 분류 결과를 하드필터에 연동
+        // 강한 불일치(target_mismatch, industry_mismatch)면 hardPass를 false로 오버라이드
+        if (hybridBreakdown && !hybridBreakdown.aiMatch) {
+          const aiReason = hybridBreakdown.aiReason || ''
+          const isStrongMismatch =
+            aiReason.includes('교육생') ||
+            aiReason.includes('참가자') ||
+            aiReason.includes('운영사') ||
+            aiReason.includes('장비') ||
+            aiReason.includes('시설') ||
+            aiReason.includes('업종 불일치') ||
+            hybridBreakdown.aiAdjustment <= -40  // 40점 이상 감점은 강한 불일치
+
+          if (isStrongMismatch && classification.confidence >= 70) {
+            // AI confidence가 70% 이상이고 강한 불일치면 hardPass를 false로
+            aiHardPassOverride = {
+              reason: aiReason,
+              source: 'ai_classification',
+              confidence: classification.confidence,
+            }
+            hardPass = false
+          }
+        }
       } else {
         // 기존 규칙 기반 매칭
         matchingScore = calculateMatchingScore(activeProfile, program)
@@ -192,6 +217,7 @@ export function SearchPage() {
           matchingScore,
           eligible: eligibilityResult.eligible,
           hardPass,
+          aiHardPassOverride: aiHardPassOverride ? aiHardPassOverride.reason : null,  // AI로 인한 오버라이드
           hardFailReasons: hardFilterResult?.hardFailReasons?.map(r => r.message),
           regionRestriction: {
             type: regionRestriction.type,
@@ -224,6 +250,8 @@ export function SearchPage() {
         // Hard Filter v2 필드
         hardPass,
         hardFilterResult,
+        // [옵션 A] AI 분류로 인한 hardPass 오버라이드 정보
+        aiHardPassOverride,
       }
     })
 
