@@ -382,13 +382,15 @@ export function SearchPage() {
       console.log('[HybridMatching] 캐시 통계:', cacheStats)
 
       // 배치 분류 실행 (10개씩 배치 처리)
+      // ✅ [개선] 프로필 정보를 함께 전달하여 AI가 맞춤 분석 수행
       const classMap = await classifyAnnouncementsBatch(
         announcements,
         10,
         (progress) => {
           setClassificationProgress(progress)
           console.log('[HybridMatching] 진행률:', progress)
-        }
+        },
+        { profile: activeProfile }  // 프로필 정보 전달
       )
 
       setClassificationMap(classMap)

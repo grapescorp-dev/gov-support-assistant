@@ -734,9 +734,10 @@ export function ProfilePage() {
                   name="serviceName"
                   value={activeProfile.serviceName || ''}
                   onChange={handleChange}
-                  placeholder="예: AI 기반 헬스케어 플랫폼"
+                  placeholder="예: 토스, 뮤직카우, 오늘의집"
                   className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
+                <p className="text-xs text-gray-500 mt-1">서비스나 회사 이름을 입력해주세요 (매칭에는 사업개요가 더 중요합니다)</p>
               </div>
 
               {/* [마이크로카피] 사업 개요 */}
