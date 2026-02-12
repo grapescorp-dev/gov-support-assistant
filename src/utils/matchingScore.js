@@ -560,17 +560,43 @@ function detectExcludedRegions(text) {
 
 /**
  * 공고에서 지역 제한 정보 추출
+ * [개선] fetchAnnouncements.js에서 추출한 regionMeta의 excluded 타입도 처리
  * @param {Object} announcement - 공고 객체
  * @returns {Object} { type: 'nationwide' | 'restricted' | 'excluded' | 'unknown', region?: string, excludedRegions?: string[], detectedCity?: string, detectedDistrict?: string, confidence?: string }
  */
 export function extractRegionRestriction(announcement) {
   // [6단계] API 메타데이터에서 지역 정보가 있으면 최우선 사용
-  // regionMeta: { regionCode, regionType, confidence, source }
+  // regionMeta: { regionCode, regionType, confidence, source, excludedRegions?, allowedRegions? }
   if (announcement.regionMeta) {
-    const { regionCode, regionType, confidence } = announcement.regionMeta
+    const { regionCode, regionType, confidence, excludedRegions, allowedRegions } = announcement.regionMeta
 
     if (regionType === 'nationwide') {
       return { type: 'nationwide', confidence: confidence || 'high', fromMeta: true }
+    }
+
+    // ✅ [개선] excluded 타입 처리 (비수도권 등 특정 지역 제외)
+    if (regionType === 'excluded' && excludedRegions && excludedRegions.length > 0) {
+      return {
+        type: 'excluded',
+        excludedRegions: excludedRegions,
+        excludedMessage: regionCode === 'non_capital'
+          ? '비수도권 대상 공고 (수도권 제외)'
+          : `특정 지역 제외 공고`,
+        confidence: confidence || 'high',
+        fromMeta: true,
+      }
+    }
+
+    // ✅ [개선] 허용 지역 목록이 있는 restricted 타입 처리
+    if (regionType === 'restricted' && allowedRegions && allowedRegions.length > 0) {
+      return {
+        type: 'restricted',
+        region: regionCode,
+        regions: allowedRegions,
+        regionLabel: regionCode === 'capital' ? '수도권' : (REGION_NAMES[regionCode] || regionCode),
+        confidence: confidence || 'high',
+        fromMeta: true,
+      }
     }
 
     if (regionType === 'restricted' && regionCode) {
@@ -2421,16 +2447,40 @@ function checkBusinessAgeEligibilityForHardFilter(profile, ageReq) {
 /**
  * 신청 대상 유형 체크 (지방자치단체, 공공기관 등 기업이 아닌 대상)
  * 기업 사용자에게는 이러한 공고가 맞춤 추천되면 안 됨
+ * [개선] eligibility 필드에서 추출된 대상 정보도 활용
  * @param {Object} announcement - 공고
  * @returns {{ excluded: boolean, targetType?: string, message?: string }}
  */
 function checkTargetTypeForHardFilter(announcement) {
+  const eligibility = announcement.eligibility || []
   const fullText = [
     announcement.title || '',
     announcement.summary || '',
-    ...(announcement.eligibility || []),
+    ...eligibility,
     ...(announcement.tags || []),
   ].join(' ').toLowerCase()
+
+  // ✅ [개선] eligibility 필드에서 직접 특수 대상 체크
+  // fetchAnnouncements.js에서 추출한 eligibility 값 활용
+  const specialTargetInEligibility = [
+    { value: '교육생', type: 'education', label: '교육생/참가자' },
+    { value: '운영사', type: 'operator', label: '운영사/주관기관' },
+    { value: '지방자치단체', type: 'government', label: '지방자치단체' },
+    { value: '공공기관', type: 'public', label: '공공기관' },
+    { value: '대학', type: 'university', label: '대학/교육기관' },
+    { value: '연구기관', type: 'research', label: '연구기관' },
+  ]
+
+  for (const { value, type, label } of specialTargetInEligibility) {
+    if (eligibility.includes(value)) {
+      return {
+        excluded: true,
+        targetType: type,
+        message: `${label} 대상 공고 (기업 신청 불가)`,
+        source: 'eligibility_extraction',
+      }
+    }
+  }
 
   // 신청 대상이 기업이 아닌 경우 (지방자치단체, 공공기관, 대학, 연구기관 등)
   const nonBusinessTargetPatterns = [
@@ -2454,6 +2504,7 @@ function checkTargetTypeForHardFilter(announcement) {
         excluded: true,
         targetType: type,
         message: `${label} 대상 공고 (기업 신청 불가)`,
+        source: 'text_pattern',
       }
     }
   }

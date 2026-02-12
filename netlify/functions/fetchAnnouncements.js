@@ -687,8 +687,211 @@ const normalizeYmdFromAny = (v) => {
   return null
 }
 
+// ==============================================
+// ✅ [개선] 텍스트에서 eligibility(지원대상) 추출
+// K-Startup, MSS API는 eligibility 필드가 없어서 summary에서 추출
+// ==============================================
+
 /**
- * K-Startup API 응답을 공통 스키마로 변환 (개선: 제목/설명에서 카테고리 추출)
+ * 텍스트에서 지원 대상(eligibility) 정보 추출
+ * @param {string} title - 공고 제목
+ * @param {string} summary - 공고 요약/본문
+ * @returns {string[]} eligibility 배열
+ */
+const extractEligibilityFromText = (title, summary) => {
+  const eligibility = []
+  const text = `${title} ${summary}`.toLowerCase()
+
+  // 기업 형태 패턴
+  const companyPatterns = [
+    { pattern: /예비\s*창업자|예비창업|창업\s*예정자/, value: '예비창업자' },
+    { pattern: /초기\s*창업자|초기창업|창업\s*초기/, value: '초기창업자' },
+    { pattern: /중소기업|중소\s*기업/, value: '중소기업' },
+    { pattern: /중견기업|중견\s*기업/, value: '중견기업' },
+    { pattern: /소상공인|소공인|영세\s*기업/, value: '소상공인' },
+    { pattern: /개인\s*사업자|1인\s*기업|1인기업/, value: '개인사업자' },
+    { pattern: /벤처\s*기업|벤처기업/, value: '벤처기업' },
+    { pattern: /스타트업|start-?up/, value: '스타트업' },
+  ]
+
+  // 특수 대상 패턴 (하드필터 대상)
+  const specialTargetPatterns = [
+    { pattern: /교육생|참가자|수강생|교육\s*참여자/, value: '교육생' },
+    { pattern: /운영사|운영\s*기관|주관\s*기관|수행\s*기관/, value: '운영사' },
+    { pattern: /지방\s*자치\s*단체|지자체/, value: '지방자치단체' },
+    { pattern: /공공\s*기관/, value: '공공기관' },
+    { pattern: /대학|대학교|학교/, value: '대학' },
+    { pattern: /연구\s*기관|연구소/, value: '연구기관' },
+  ]
+
+  // 업종 특화 패턴
+  const industryPatterns = [
+    { pattern: /바이오\s*(기업|분야|창업자?|스타트업)|바이오기업/, value: '바이오기업' },
+    { pattern: /제조업|제조\s*기업|제조업체/, value: '제조업' },
+    { pattern: /it\s*기업|소프트웨어\s*기업|sw\s*기업/, value: 'IT기업' },
+    { pattern: /콘텐츠\s*기업|콘텐츠\s*제작/, value: '콘텐츠기업' },
+    { pattern: /농업|농가|영농|농업인/, value: '농업' },
+    { pattern: /수산|어업|어민/, value: '수산업' },
+  ]
+
+  // 모든 패턴 검사
+  const allPatterns = [...companyPatterns, ...specialTargetPatterns, ...industryPatterns]
+
+  for (const { pattern, value } of allPatterns) {
+    if (pattern.test(text)) {
+      if (!eligibility.includes(value)) {
+        eligibility.push(value)
+      }
+    }
+  }
+
+  return eligibility
+}
+
+// ==============================================
+// ✅ [개선] 텍스트에서 지역 제한 정보 추출
+// K-Startup, MSS API는 regionMeta 필드가 없어서 텍스트에서 추출
+// ==============================================
+
+/**
+ * 텍스트에서 지역 제한 정보 추출
+ * @param {string} title - 공고 제목
+ * @param {string} summary - 공고 요약/본문
+ * @param {string} organization - 기관명
+ * @returns {Object|null} regionMeta 객체 또는 null
+ */
+const extractRegionFromText = (title, summary, organization) => {
+  const text = `${title} ${summary} ${organization}`
+
+  // 1. 비수도권/지방 제한 패턴 (수도권 기업 제외)
+  const nonCapitalPatterns = [
+    /비수도권\s*(지방)?자치단체/,
+    /비수도권\s*(소재|기업|지역|대상|한정)/,
+    /수도권\s*(외|제외|이외)\s*(지역|기업|소재)?/,
+    /지방\s*소재\s*(기업|중소기업)/,
+    /지방\s*중소기업/,
+  ]
+
+  for (const pattern of nonCapitalPatterns) {
+    if (pattern.test(text)) {
+      return {
+        regionCode: 'non_capital',
+        regionType: 'excluded',
+        excludedRegions: ['seoul', 'gyeonggi', 'incheon'],
+        confidence: 'high',
+        source: 'text_extraction',
+      }
+    }
+  }
+
+  // 2. 수도권 한정 패턴 (비수도권 제외)
+  const capitalOnlyPatterns = [
+    /수도권\s*(소재|기업|지역|대상|한정|만)/,
+    /서울\s*(및|,|·)\s*경기\s*(및|,|·)?\s*인천/,
+  ]
+
+  for (const pattern of capitalOnlyPatterns) {
+    if (pattern.test(text)) {
+      return {
+        regionCode: 'capital',
+        regionType: 'restricted',
+        allowedRegions: ['seoul', 'gyeonggi', 'incheon'],
+        confidence: 'high',
+        source: 'text_extraction',
+      }
+    }
+  }
+
+  // 3. 특정 지역 제한 패턴
+  const specificRegionPatterns = [
+    { pattern: /서울\s*(시|특별시)?\s*(소재|기업|지역)/, region: 'seoul' },
+    { pattern: /경기\s*(도)?\s*(소재|기업|지역)/, region: 'gyeonggi' },
+    { pattern: /인천\s*(시|광역시)?\s*(소재|기업|지역)/, region: 'incheon' },
+    { pattern: /부산\s*(시|광역시)?\s*(소재|기업|지역)/, region: 'busan' },
+    { pattern: /대구\s*(시|광역시)?\s*(소재|기업|지역)/, region: 'daegu' },
+    { pattern: /대전\s*(시|광역시)?\s*(소재|기업|지역)/, region: 'daejeon' },
+    { pattern: /광주\s*(시|광역시)?\s*(소재|기업|지역)/, region: 'gwangju' },
+    { pattern: /울산\s*(시|광역시)?\s*(소재|기업|지역)/, region: 'ulsan' },
+    { pattern: /세종\s*(시|특별자치시)?\s*(소재|기업|지역)/, region: 'sejong' },
+    { pattern: /강원\s*(도|특별자치도)?\s*(소재|기업|지역)/, region: 'gangwon' },
+    { pattern: /충북\s*(도|충청북도)?\s*(소재|기업|지역)/, region: 'chungbuk' },
+    { pattern: /충남\s*(도|충청남도)?\s*(소재|기업|지역)/, region: 'chungnam' },
+    { pattern: /전북\s*(도|특별자치도|전라북도)?\s*(소재|기업|지역)/, region: 'jeonbuk' },
+    { pattern: /전남\s*(도|전라남도)?\s*(소재|기업|지역)/, region: 'jeonnam' },
+    { pattern: /경북\s*(도|경상북도)?\s*(소재|기업|지역)/, region: 'gyeongbuk' },
+    { pattern: /경남\s*(도|경상남도)?\s*(소재|기업|지역)/, region: 'gyeongnam' },
+    { pattern: /제주\s*(도|특별자치도)?\s*(소재|기업|지역)/, region: 'jeju' },
+  ]
+
+  for (const { pattern, region } of specificRegionPatterns) {
+    if (pattern.test(text)) {
+      return {
+        regionCode: region,
+        regionType: 'restricted',
+        confidence: 'medium',
+        source: 'text_extraction',
+      }
+    }
+  }
+
+  // 4. 기관명에서 지역 추론
+  const orgRegionPatterns = [
+    { pattern: /서울|sba|서울산업진흥원/, region: 'seoul' },
+    { pattern: /경기|ggtp/, region: 'gyeonggi' },
+    { pattern: /인천|ifez/, region: 'incheon' },
+    { pattern: /부산|bipa/, region: 'busan' },
+    { pattern: /대구|dgdip|dip/, region: 'daegu' },
+    { pattern: /대전/, region: 'daejeon' },
+    { pattern: /광주|gicon/, region: 'gwangju' },
+    { pattern: /울산|utp/, region: 'ulsan' },
+    { pattern: /세종/, region: 'sejong' },
+    { pattern: /강원|gwtp/, region: 'gangwon' },
+    { pattern: /충북/, region: 'chungbuk' },
+    { pattern: /충남/, region: 'chungnam' },
+    { pattern: /전북|jbtp/, region: 'jeonbuk' },
+    { pattern: /전남/, region: 'jeonnam' },
+    { pattern: /경북|gbtp/, region: 'gyeongbuk' },
+    { pattern: /경남|gntp/, region: 'gyeongnam' },
+    { pattern: /제주|jdc/, region: 'jeju' },
+  ]
+
+  // 기관명에서만 검사 (confidence: low)
+  const orgLower = organization.toLowerCase()
+  for (const { pattern, region } of orgRegionPatterns) {
+    if (pattern.test(orgLower)) {
+      return {
+        regionCode: region,
+        regionType: 'restricted',
+        confidence: 'low', // 기관명 기반은 낮은 신뢰도 (지역 기관이지만 전국 대상일 수 있음)
+        source: 'organization',
+      }
+    }
+  }
+
+  // 5. 전국/지역무관 패턴
+  const nationwidePatterns = [
+    /전국\s*(대상|기업|모집)/,
+    /지역\s*무관/,
+    /지역\s*제한\s*없/,
+  ]
+
+  for (const pattern of nationwidePatterns) {
+    if (pattern.test(text)) {
+      return {
+        regionCode: 'nationwide',
+        regionType: 'nationwide',
+        confidence: 'high',
+        source: 'text_extraction',
+      }
+    }
+  }
+
+  return null
+}
+
+/**
+ * K-Startup API 응답을 공통 스키마로 변환
+ * [개선] 제목/설명에서 카테고리, eligibility, regionMeta 추출
  */
 const transformKstartupResponse = (items) => {
   return (items || [])
@@ -718,6 +921,12 @@ const transformKstartupResponse = (items) => {
       const textCategories = extractCategoriesFromText(`${title} ${summary}`)
       const categories = textCategories.length > 0 ? [...new Set(['창업', ...textCategories])] : ['창업']
 
+      // ✅ [개선] 텍스트에서 eligibility 추출
+      const extractedEligibility = extractEligibilityFromText(title, summary)
+
+      // ✅ [개선] 텍스트에서 regionMeta 추출
+      const extractedRegionMeta = extractRegionFromText(title, summary, org)
+
       const baseItem = {
         id: item.pbanc_sn || item.id || `${title}__${start || ''}__${end || ''}`,
         title,
@@ -725,7 +934,7 @@ const transformKstartupResponse = (items) => {
         category: categories,
         deadline,
         budget: null,
-        eligibility: [],
+        eligibility: extractedEligibility, // ✅ 추출된 eligibility 사용
         link,
         detailUrl: link,
         summary,
@@ -734,6 +943,7 @@ const transformKstartupResponse = (items) => {
         source: 'kstartup_api',
         author: null,
         lcategory: '창업',
+        regionMeta: extractedRegionMeta, // ✅ 추출된 regionMeta 사용
         pubDate: normalizeYmdFromAny(item.pbanc_reg_dt || item.reg_dt || item.pub_date) || null,
         reqstDt: start && end ? `${start} ~ ${end}` : start || end || null,
         hashTags: '',
@@ -856,7 +1066,8 @@ const fetchMssAnnouncements = async ({ apiKey, max = 100, perPage = 100 } = {}) 
 }
 
 /**
- * MSS item(XML 블록) -> 공통 스키마 변환 (개선: 제목/설명에서 카테고리 추출)
+ * MSS item(XML 블록) -> 공통 스키마 변환
+ * [개선] 제목/설명에서 카테고리, eligibility, regionMeta 추출
  */
 const transformMssResponse = (itemBlocks) => {
   return (itemBlocks || [])
@@ -877,10 +1088,17 @@ const transformMssResponse = (itemBlocks) => {
       const writerEmail = getTagText(block, 'writerEmail') || null
 
       const summary = stripHtmlTags(dataContentsRaw)
+      const org = '중소벤처기업부'
 
       // 제목, 설명에서 카테고리 추출 (개선된 함수 사용)
       const textCategories = extractCategoriesFromText(`${title} ${summary}`)
       const categories = textCategories.length > 0 ? [...new Set(['창업', ...textCategories])] : ['창업']
+
+      // ✅ [개선] 텍스트에서 eligibility 추출
+      const extractedEligibility = extractEligibilityFromText(title, summary)
+
+      // ✅ [개선] 텍스트에서 regionMeta 추출
+      const extractedRegionMeta = extractRegionFromText(title, summary, org)
 
       const deadline = applicationEndDate || null
 
@@ -892,11 +1110,11 @@ const transformMssResponse = (itemBlocks) => {
       const baseItem = {
         id: itemId || `mss__${title}__${applicationStartDate || ''}__${applicationEndDate || ''}`,
         title,
-        organization: '중소벤처기업부',
+        organization: org,
         category: categories.length ? categories : ['창업'],
         deadline,
         budget: null,
-        eligibility: [],
+        eligibility: extractedEligibility, // ✅ 추출된 eligibility 사용
         link: viewUrl,
         detailUrl: viewUrl,
         summary,
@@ -905,6 +1123,7 @@ const transformMssResponse = (itemBlocks) => {
         source: 'mss_api',
         author: writerName,
         lcategory: '창업',
+        regionMeta: extractedRegionMeta, // ✅ 추출된 regionMeta 사용
         pubDate: null,
         reqstDt,
         hashTags: '',
