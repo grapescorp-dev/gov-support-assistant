@@ -155,9 +155,36 @@ export function SearchPage() {
         regionRestriction.region !== activeProfile.region
 
       // 자격 검증 수행 (프로필이 있을 때만)
+      // [디버그] 첫 3개 공고에 대해 프로필 정보 로깅
+      if (results.indexOf(program) < 3 && activeProfile) {
+        console.log('[SearchPage] 필터에 전달할 프로필:', {
+          id: activeProfile?.id,
+          name: activeProfile?.name,
+          interests: activeProfile?.interests,
+          companyType: activeProfile?.companyType,
+          region: activeProfile?.region,
+        })
+        console.log('[SearchPage] 검증할 공고:', {
+          title: program.title?.substring(0, 40),
+          category: program.category,
+          tags: program.tags,
+        })
+      }
+
       const eligibilityResult = activeProfile
         ? checkEligibility(activeProfile, program)
         : { eligible: true, excludedReason: null, hardFilterResult: null }
+
+      // [디버그] 첫 3개 공고에 대해 필터 결과 로깅
+      if (results.indexOf(program) < 3 && activeProfile) {
+        console.log('[SearchPage] 필터 결과:', {
+          title: program.title?.substring(0, 30),
+          eligible: eligibilityResult.eligible,
+          hardPass: eligibilityResult.hardFilterResult?.hardPass,
+          failReasons: eligibilityResult.hardFilterResult?.hardFailReasons?.map(r => r.message),
+          unknownReasons: eligibilityResult.hardFilterResult?.hardUnknownReasons?.map(r => r.message),
+        })
+      }
 
       // hardFilterResult에서 hardPass 추출 (v2)
       const hardFilterResult = eligibilityResult.hardFilterResult
