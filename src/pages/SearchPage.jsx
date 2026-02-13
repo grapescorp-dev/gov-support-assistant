@@ -564,7 +564,7 @@ export function SearchPage() {
           - 검색창
           - 카테고리/필터
           ======================================== */}
-      <div className="sticky top-0 z-30 bg-gray-50 pb-4 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 border-b border-gray-200 shadow-sm">
+      <div className="sticky top-16 z-40 bg-gray-50 pb-4 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 border-b border-gray-200 shadow-sm">
         {/* [하이브리드 매칭] AI 분류 진행 상태 표시 */}
         {isClassifying && (
           <div className="bg-indigo-50 border border-indigo-200 p-3 rounded-xl mb-3">
@@ -1122,10 +1122,10 @@ export function SearchPage() {
           )}
         </div>
 
-        {/* AI 분석 패널 - 스크롤 시 상단 헤더 아래에 고정 */}
+        {/* AI 분석 패널 */}
         <div className="lg:col-span-2">
-          <div className="sticky top-[280px] space-y-4">
-            <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 bg-gray-50 py-2 sticky top-0 z-10">
+          <div className="space-y-4">
+            <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 py-2">
               <Sparkles size={20} className="text-yellow-500" />
               AI 분석
             </h3>
