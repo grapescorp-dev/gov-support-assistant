@@ -9,8 +9,12 @@ import {
   summarizeProgramFromDoc,
   classifyAnnouncementsBatch,
   getIndustryClassFromCache,
-  getIndustryClassCacheStats,
 } from '../api/announcements'
+import {
+  getCachedClassifications,
+  saveClassifications,
+  getCacheStats,
+} from '../utils/classificationCache'
 import {
   calculateMatchingScore,
   extractRegionRestriction,
@@ -329,24 +333,55 @@ export function SearchPage() {
     }
   }
 
-  // [하이브리드 매칭] AI 분류 실행
+  // [하이브리드 매칭] AI 분류 실행 (캐싱 적용)
   const runHybridClassification = async (announcements) => {
     setIsClassifying(true)
     setClassificationProgress({ cached: 0, total: announcements.length, processed: 0 })
 
     try {
-      // 배치 분류 실행 (10개씩 배치 처리)
-      // ✅ [개선] 프로필 정보를 함께 전달하여 AI가 맞춤 분석 수행
-      const classMap = await classifyAnnouncementsBatch(
-        announcements,
-        10,
-        (progress) => {
-          setClassificationProgress(progress)
-        },
-        { profile: activeProfile }  // 프로필 정보 전달
-      )
+      // ✅ [비용 절감] 캐시에서 먼저 조회
+      const { cached, needsClassification } = getCachedClassifications(announcements)
 
-      setClassificationMap(classMap)
+      // 캐시 통계 로깅 (비용 절감 확인용)
+      const stats = getCacheStats()
+      console.log(`[AI 비용 절감] 캐시 적중: ${cached.size}개, AI 호출 필요: ${needsClassification.length}개`)
+      console.log(`[AI 비용 절감] 캐시 상태: 총 ${stats.total}개 (유효: ${stats.valid}, 만료: ${stats.expired})`)
+
+      // 캐시된 결과로 진행률 업데이트
+      setClassificationProgress({
+        cached: cached.size,
+        total: announcements.length,
+        processed: cached.size,
+      })
+
+      let finalClassMap = cached
+
+      // 캐시 없는 공고만 AI 분류 실행
+      if (needsClassification.length > 0) {
+        const newClassifications = await classifyAnnouncementsBatch(
+          needsClassification,
+          10,
+          (progress) => {
+            setClassificationProgress({
+              cached: cached.size,
+              total: announcements.length,
+              processed: cached.size + progress.processed,
+            })
+          },
+          { profile: activeProfile }
+        )
+
+        // 새 분류 결과를 캐시에 저장
+        saveClassifications(newClassifications)
+        console.log(`[AI 비용 절감] ${newClassifications.size}개 새 분류 결과 캐시 저장 완료`)
+
+        // 기존 캐시와 병합
+        finalClassMap = new Map([...cached, ...newClassifications])
+      } else {
+        console.log('[AI 비용 절감] 모든 공고가 캐시에서 로드됨 - AI API 호출 0건!')
+      }
+
+      setClassificationMap(finalClassMap)
     } catch (error) {
       console.error('[HybridMatching] 분류 오류:', error)
     } finally {
