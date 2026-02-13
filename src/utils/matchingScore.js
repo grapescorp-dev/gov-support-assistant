@@ -196,6 +196,107 @@ function getAllKeywordsForRegion(regionData) {
 }
 
 // ==============================================
+// 관심분야 호환성 필터 (Interest Compatibility Filter)
+// ==============================================
+
+/**
+ * 기술/IT 분야와 호환 불가능한 산업 정의
+ * - 기술 기반 스타트업에게 농업/제조/건설 등은 연관성이 낮음
+ */
+const INCOMPATIBLE_INDUSTRIES = {
+  agriculture: ['농업', '농생명', '수산', '축산', '임업', '농촌', '어업', '영농'],
+  manufacturing: ['제조업', '철강', '화학', '섬유', '기계', '금속', '조선', '자동차부품'],
+  traditional: ['전통시장', '골목상권', '도소매', '유통', '재래시장', '전통주'],
+  construction: ['건설', '토목', '건축', '부동산', '시공', '토건'],
+}
+
+/**
+ * 공고에서 호환 불가능한 산업 감지
+ * @param {Object} announcement - 공고 객체
+ * @returns {{ industry: string, keywords: string[] } | null}
+ */
+function detectIncompatibleIndustry(announcement) {
+  const text = `${announcement.title || ''} ${announcement.summary || ''} ${(announcement.tags || []).join(' ')}`.toLowerCase()
+
+  for (const [industry, keywords] of Object.entries(INCOMPATIBLE_INDUSTRIES)) {
+    const matchedKeywords = keywords.filter((kw) => text.includes(kw.toLowerCase()))
+    if (matchedKeywords.length > 0) {
+      return { industry, keywords: matchedKeywords }
+    }
+  }
+  return null
+}
+
+/**
+ * 사용자의 기술 분야 관심사 목록
+ */
+const TECH_INTERESTS = ['AI', 'ICT', 'IT', 'CT', '콘텐츠', '음악', '게임', 'SW', '데이터', '클라우드', '핀테크', '블록체인']
+
+/**
+ * 범용 관심사 (산업 불문 적용 가능)
+ */
+const GENERAL_INTERESTS = ['창업', '수출', 'R&D', '마케팅', '투자', '인력', '컨설팅']
+
+/**
+ * 사용자 관심사와 산업 호환성 체크
+ * @param {Object} profile - 사용자 프로필
+ * @param {Object} announcement - 공고 객체
+ * @returns {{ compatible: boolean, reason?: string }}
+ */
+function checkInterestCompatibility(profile, announcement) {
+  const userInterests = profile?.interests || []
+  if (userInterests.length === 0) return { compatible: true }
+
+  const incompatibleIndustry = detectIncompatibleIndustry(announcement)
+  if (!incompatibleIndustry) return { compatible: true }
+
+  // 기술 분야 관심사가 있는지 확인
+  const hasTechInterests = userInterests.some((i) => TECH_INTERESTS.includes(i))
+
+  // 범용 관심사만 있는지 확인
+  const hasOnlyGeneralInterests = userInterests.every((i) => GENERAL_INTERESTS.includes(i))
+
+  // 기술 분야 관심사가 있고, 범용 관심사만 있는 게 아닌 경우 → 불일치
+  if (hasTechInterests && !hasOnlyGeneralInterests) {
+    return {
+      compatible: false,
+      reason: `기술 분야(${userInterests.filter((i) => TECH_INTERESTS.includes(i)).join(', ')})와 ${incompatibleIndustry.keywords.join('/')} 분야 공고는 연관성이 낮습니다`,
+      industry: incompatibleIndustry.industry,
+    }
+  }
+
+  return { compatible: true }
+}
+
+/**
+ * 관심분야 매칭률 계산
+ * @param {Object} profile - 사용자 프로필
+ * @param {Object} announcement - 공고 객체
+ * @returns {{ matchCount: number, matchRate: number }}
+ */
+function calculateInterestMatchRate(profile, announcement) {
+  const userInterests = profile?.interests || []
+  const categories = announcement.category || []
+  const tags = announcement.tags || []
+  const allCategories = [...categories, ...tags]
+
+  if (userInterests.length === 0) return { matchCount: 0, matchRate: 1 }
+
+  let matchCount = 0
+  userInterests.forEach((interest) => {
+    // 카테고리나 태그에 관심분야가 포함되어 있으면 매칭
+    if (allCategories.some((cat) => cat.includes(interest) || interest.includes(cat))) {
+      matchCount++
+    }
+  })
+
+  return {
+    matchCount,
+    matchRate: matchCount / userInterests.length,
+  }
+}
+
+// ==============================================
 // 유사어 매핑 (Synonym Mapping)
 // ==============================================
 const SYNONYMS = {
@@ -2890,6 +2991,36 @@ export function applyHardFilter(profile, announcement, options = {}) {
       source: 'targetType',
       targetType: targetTypeResult.targetType,
     })
+  }
+
+  // 8.6 [신규] 관심분야 호환성 체크 (기술 분야 vs 농업/제조/건설 등)
+  const interestCompatibility = checkInterestCompatibility(profile, announcement)
+  if (!interestCompatibility.compatible) {
+    failReasons.push({
+      label: HARD_FILTER_LABELS.INDUSTRY_MISMATCH,
+      message: interestCompatibility.reason,
+      confidence: CONFIDENCE.MEDIUM, // 완전 배제보다는 경고 수준
+      source: 'interestCompatibility',
+      incompatibleIndustry: interestCompatibility.industry,
+    })
+  }
+
+  // 8.7 [신규] 관심분야 매칭률 체크 (0% 매칭 시 경고)
+  const interestMatch = calculateInterestMatchRate(profile, announcement)
+  if (interestMatch.matchRate === 0 && (profile?.interests?.length || 0) > 0) {
+    // 범용 카테고리는 예외 처리 (창업, 수출 등은 산업 불문)
+    const hasGeneralCategory = (announcement.category || []).some((cat) =>
+      ['창업', '수출', 'R&D', '마케팅', '일반'].includes(cat)
+    )
+
+    if (!hasGeneralCategory) {
+      // 완전 불일치이지만 MEDIUM confidence (경고 수준)
+      unknownReasons.push({
+        label: HARD_FILTER_LABELS.INDUSTRY_MISMATCH,
+        message: `관심분야(${profile.interests.join(', ')})와 공고 카테고리가 일치하지 않습니다`,
+        reason: 'INTEREST_ZERO_MATCH',
+      })
+    }
   }
 
   // 9. 최종 결정 (Unknown은 기본 포함)
