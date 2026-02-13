@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   useProfileStore,
   COMPANY_TYPES,
@@ -459,6 +460,7 @@ function ProfileCard({ profile, isActive, onSelect, onDelete, onRename }) {
 }
 
 export function ProfilePage() {
+  const navigate = useNavigate()
   const {
     profiles,
     activeProfileId,
@@ -474,6 +476,9 @@ export function ProfilePage() {
   } = useProfileStore()
 
   const { success, error } = useToastStore()
+
+  // 저장 후 공고 페이지 이동 확인 모달 상태
+  const [showNavigateModal, setShowNavigateModal] = useState(false)
 
   const activeProfile = getActiveProfile()
 
@@ -559,11 +564,47 @@ export function ProfilePage() {
     }
   }
 
+  // 프로필 필수값 검증 함수
+  const validateProfile = () => {
+    if (!activeProfile) return { valid: false, message: '프로필이 선택되지 않았습니다.' }
+
+    const missingFields = []
+
+    // 필수 입력 항목 체크 (인증/투자, 보조 관심분야, 제외 관심분야는 선택)
+    if (!activeProfile.serviceName?.trim()) missingFields.push('서비스명')
+    if (!activeProfile.businessOverview?.trim()) missingFields.push('사업 개요')
+    if (!activeProfile.targetMarket?.trim()) missingFields.push('타겟 시장')
+    if (!activeProfile.companyType) missingFields.push('기업 유형')
+    if (!activeProfile.businessAge) missingFields.push('업력')
+    if (!activeProfile.region) missingFields.push('소재지')
+    if (!activeProfile.revenue) missingFields.push('연 매출')
+    if (!activeProfile.employees) missingFields.push('직원 수')
+    if (!activeProfile.interests || activeProfile.interests.length === 0) missingFields.push('핵심 도메인')
+
+    if (missingFields.length > 0) {
+      return {
+        valid: false,
+        message: `다음 필수 항목을 입력해주세요:\n${missingFields.join(', ')}`
+      }
+    }
+
+    return { valid: true, message: '' }
+  }
+
   const handleSubmit = (e) => {
     e.preventDefault()
-    if (activeProfile) {
-      success('프로필이 저장되었습니다')
+    if (!activeProfile) return
+
+    // 필수값 검증
+    const validation = validateProfile()
+    if (!validation.valid) {
+      alert(validation.message)
+      return
     }
+
+    // 저장 성공 후 공고 페이지 이동 확인 모달 표시
+    success('프로필이 저장되었습니다')
+    setShowNavigateModal(true)
   }
 
   const handleAddProfile = () => {
@@ -977,6 +1018,41 @@ export function ProfilePage() {
             </button>
           </div>
         </form>
+      )}
+
+      {/* 저장 완료 후 공고 페이지 이동 확인 모달 */}
+      {showNavigateModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-xl">
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Check size={32} className="text-green-600" />
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">프로필이 저장되었습니다</h3>
+              <p className="text-gray-600 text-sm">
+                이제 맞춤 공고를 확인해보세요!<br />
+                AI가 프로필을 분석하여 적합한 지원사업을 추천해드립니다.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowNavigateModal(false)}
+                className="flex-1 px-4 py-3 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors font-medium"
+              >
+                계속 수정
+              </button>
+              <button
+                onClick={() => {
+                  setShowNavigateModal(false)
+                  navigate('/search')
+                }}
+                className="flex-1 px-4 py-3 text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors font-medium"
+              >
+                공고 보러가기
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

@@ -201,42 +201,6 @@ export function SearchPage() {
         matchingScore = calculateMatchingScore(activeProfile, program)
       }
 
-      // 디버그: 특정 공고 또는 첫 5개 공고의 매칭 결과 로깅
-      const programIdStr = String(program.id || '')
-      const isTargetProgram =
-        programIdStr.includes('176145') || // 메이커 장비
-        programIdStr.includes('118169') || // 기후테크
-        programIdStr.includes('118094') || // 관악구
-        (program.title || '').includes('메이커') ||
-        (program.title || '').includes('기후테크') ||
-        (program.title || '').includes('관악구')
-
-      if (isTargetProgram || (program.id && results.indexOf(program) < 3)) {
-        console.log(`[Matching] ${(program.title || '').substring(0, 40)}...`, {
-          id: program.id,
-          matchingScore,
-          eligible: eligibilityResult.eligible,
-          hardPass,
-          aiHardPassOverride: aiHardPassOverride ? aiHardPassOverride.reason : null,  // AI로 인한 오버라이드
-          hardFailReasons: hardFilterResult?.hardFailReasons?.map(r => r.message),
-          regionRestriction: {
-            type: regionRestriction.type,
-            region: regionRestriction.region,
-            detectedDistrict: regionRestriction.detectedDistrict,
-          },
-          profileRegion: {
-            region: activeProfile?.region,
-            subRegion: activeProfile?.subRegion,
-          },
-          classification: classification ? {
-            primaryIndustry: classification.primaryIndustry,
-            targetType: classification.targetType,
-            confidence: classification.confidence,
-          } : null,
-          hybridBreakdown,
-        })
-      }
-
       return {
         ...program,
         matchingScore,
@@ -346,13 +310,9 @@ export function SearchPage() {
     setSelectedProgram(null)
     setAiAnalysis(null)
 
-    console.log('[SearchPage] 검색 시작:', { keyword, initial, hasProfile: !!activeProfile })
-
     try {
       // API는 키워드만으로 검색, 카테고리는 클라이언트에서 필터링
       const data = await searchAnnouncements(keyword, {})
-      console.log('[SearchPage] API 검색 결과:', data.length, '건')
-      console.log('[SearchPage] 프로필 상태:', activeProfile ? '있음' : '없음')
       setResults(data)
 
       // [하이브리드 매칭] 프로필이 있고, 하이브리드 매칭이 켜져 있으면 AI 분류 실행
@@ -360,11 +320,9 @@ export function SearchPage() {
         runHybridClassification(data)
       }
     } catch (error) {
-      console.error('[SearchPage] 검색 오류:', error)
       // 개발 환경에서는 로컬 목업 데이터 사용
       const { searchAnnouncements: localSearch } = await import('../data/mockAnnouncements')
       const filtered = localSearch(keyword)
-      console.log('[SearchPage] 로컬 데이터 사용:', filtered.length, '건')
       setResults(filtered)
     } finally {
       setLoading(false)
@@ -377,10 +335,6 @@ export function SearchPage() {
     setClassificationProgress({ cached: 0, total: announcements.length, processed: 0 })
 
     try {
-      // 캐시 통계 먼저 확인
-      const cacheStats = getIndustryClassCacheStats()
-      console.log('[HybridMatching] 캐시 통계:', cacheStats)
-
       // 배치 분류 실행 (10개씩 배치 처리)
       // ✅ [개선] 프로필 정보를 함께 전달하여 AI가 맞춤 분석 수행
       const classMap = await classifyAnnouncementsBatch(
@@ -388,13 +342,11 @@ export function SearchPage() {
         10,
         (progress) => {
           setClassificationProgress(progress)
-          console.log('[HybridMatching] 진행률:', progress)
         },
         { profile: activeProfile }  // 프로필 정보 전달
       )
 
       setClassificationMap(classMap)
-      console.log('[HybridMatching] 분류 완료:', classMap.size, '건')
     } catch (error) {
       console.error('[HybridMatching] 분류 오류:', error)
     } finally {
@@ -441,7 +393,8 @@ export function SearchPage() {
 
   // AI 맞춤 분석 요청 (버튼 클릭 시에만 호출 - 비용 절감)
   const handleRequestAnalysis = async () => {
-    if (!selectedProgram) return
+    // ✅ [비용 절감] 프로필이 없으면 AI 분석 실행하지 않음
+    if (!selectedProgram || !activeProfile) return
 
     setIsAnalyzing(true)
     try {
@@ -489,7 +442,8 @@ export function SearchPage() {
 
   // 문서 기반 AI 요약 핸들러
   const handleDocSummarize = async () => {
-    if (!selectedProgram) return
+    // ✅ [비용 절감] 프로필이 없으면 AI 요약 실행하지 않음
+    if (!selectedProgram || !activeProfile) return
 
     setIsDocSummarizing(true)
     setDocSummaryError(null)
@@ -499,9 +453,6 @@ export function SearchPage() {
 
       if (result.success) {
         setDocSummary(result.data)
-        if (result.fromCache) {
-          console.log('[DocSummary] Loaded from cache')
-        }
       } else {
         setDocSummaryError(result.error?.message || '요약 생성에 실패했습니다.')
       }
@@ -600,7 +551,8 @@ export function SearchPage() {
   }, [activeProfile])
 
   // 현재 탭에 따른 결과
-  const currentResults = activeTab === 'recommended' ? recommendedResults : allResults
+  // ✅ [비용 절감] 프로필이 없으면 무조건 전체 공고만 표시
+  const currentResults = (activeProfile && activeTab === 'recommended') ? recommendedResults : allResults
 
   return (
     <div className="space-y-0">
@@ -1141,7 +1093,7 @@ export function SearchPage() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation()
-                            console.log('[관심 공고] 저장:', program.id)
+                            // TODO: 관심 공고 저장 기능 구현
                           }}
                           className="flex items-center justify-center gap-1.5 px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
                         >
@@ -1189,17 +1141,35 @@ export function SearchPage() {
                 /* AI 분석 요청 버튼 (비용 절감: 자동 분석 대신 수동 요청) */
                 <div className="flex flex-col items-center justify-center py-8">
                   <h4 className="font-semibold text-gray-900 mb-3">{selectedProgram.title}</h4>
-                  <p className="text-sm text-gray-500 mb-4 text-center">
-                    AI가 이 공고와 프로필의 적합도를 분석하고<br />
-                    맞춤형 작성 가이드를 제공합니다.
-                  </p>
-                  <button
-                    onClick={handleRequestAnalysis}
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                  >
-                    <Sparkles size={18} />
-                    AI 맞춤 분석 요청
-                  </button>
+                  {activeProfile ? (
+                    <>
+                      <p className="text-sm text-gray-500 mb-4 text-center">
+                        AI가 이 공고와 프로필의 적합도를 분석하고<br />
+                        맞춤형 작성 가이드를 제공합니다.
+                      </p>
+                      <button
+                        onClick={handleRequestAnalysis}
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                      >
+                        <Sparkles size={18} />
+                        AI 맞춤 분석 요청
+                      </button>
+                    </>
+                  ) : (
+                    <div className="text-center">
+                      <p className="text-sm text-gray-500 mb-4">
+                        AI 분석 기능을 사용하려면<br />
+                        프로필을 먼저 설정해주세요.
+                      </p>
+                      <Link
+                        to="/profile"
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 transition-colors"
+                      >
+                        <UserCircle size={18} />
+                        프로필 설정하기
+                      </Link>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <>
@@ -1301,8 +1271,8 @@ export function SearchPage() {
                     </div>
                   )}
 
-                  {/* 문서 기반 AI 요약 섹션 (MSS 공고 전용) */}
-                  {hasMssDocuments(selectedProgram) && (
+                  {/* 문서 기반 AI 요약 섹션 (MSS 공고 전용, 프로필 필요) */}
+                  {hasMssDocuments(selectedProgram) && activeProfile && (
                     <div className="border-t border-gray-200 pt-4 mt-4">
                       <div className="flex items-center justify-between mb-3">
                         <h5 className="font-medium text-gray-800 flex items-center gap-2">

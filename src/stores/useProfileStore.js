@@ -118,10 +118,12 @@ export const useProfileStore = create(
         }),
 
       // 활성 프로필 변경 (로그인 상태 유지하면서)
+      // ✅ [버그 수정] 프로필 삭제 후에도 다른 프로필 선택 가능하도록 수정
       setActiveProfile: (id) => {
         const state = get()
-        if (state.isLoggedIn) {
-          set({ activeProfileId: id })
+        const profileExists = state.profiles.some(p => p.id === id)
+        if (profileExists) {
+          set({ activeProfileId: id, isLoggedIn: true })
         }
       },
 

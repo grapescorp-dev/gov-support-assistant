@@ -63,7 +63,7 @@ function ProfileDropdown() {
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-64 bg-white rounded-xl shadow-lg border border-gray-200 py-2 z-50">
+        <div className="absolute right-0 mt-2 w-64 bg-white rounded-xl shadow-lg border border-gray-200 py-2 z-[100]">
           <div className="px-3 py-2 border-b border-gray-100">
             <p className="text-xs font-medium text-gray-500">프로필 전환</p>
           </div>
