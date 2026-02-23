@@ -369,7 +369,7 @@ JSON 응답:
 {"summary":"3-5문장 핵심요약","keyEligibility":["자격1","자격2","자격3"],"keyExclusion":["제외1","제외2"],"keyMandatory":["필수1","필수2"],"recommendation":"한줄조언"}`
 
   const message = await anthropic.messages.create({
-    model: 'claude-3-5-haiku-20241022',  // 비용 절감: Sonnet → Haiku
+    model: 'claude-haiku-4-5-20250929',  // 비용 절감: Sonnet → Haiku
     max_tokens: 600,  // 출력 토큰 감소
     messages: [{ role: 'user', content: userPrompt }],
     system: systemPrompt,

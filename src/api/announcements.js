@@ -981,12 +981,12 @@ export async function classifyAnnouncementsBatch(announcements, batchSize = 10, 
       } else {
         // 배치 API 실패 시 개별 분류로 fallback
         console.warn('[classifyBatch] Batch API failed, falling back to individual classification')
-        await classifyBatchFallback(batch, results)
+        await classifyBatchFallback(batch, results, profileData)
       }
     } catch (error) {
       console.error('[classifyBatch] Batch API error:', error)
       // 에러 시 개별 분류로 fallback
-      await classifyBatchFallback(batch, results)
+      await classifyBatchFallback(batch, results, profileData)
     }
 
     if (onProgress) {
@@ -1003,11 +1003,16 @@ export async function classifyAnnouncementsBatch(announcements, batchSize = 10, 
 
 /**
  * 배치 API 실패 시 개별 분류로 fallback
+ * @param {Object[]} batch - 공고 배열
+ * @param {Map} results - 결과 맵
+ * @param {Object|null} profileData - 프로필 데이터 (선택)
  */
-async function classifyBatchFallback(batch, results) {
+async function classifyBatchFallback(batch, results, profileData = null) {
   for (const ann of batch) {
     try {
-      const result = await classifyAnnouncement(ann)
+      const result = await classifyAnnouncement(ann, {
+        profile: profileData ? { ...profileData, id: 'fallback' } : null,
+      })
       if (result.success && result.data) {
         results.set(ann.id, result.data)
       }

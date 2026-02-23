@@ -128,7 +128,7 @@ JSON 배열 형식으로 응답:
 JSON 배열만 출력하세요.`
 
     const message = await anthropic.messages.create({
-      model: 'claude-3-5-haiku-20241022',
+      model: 'claude-haiku-4-5-20250929',
       max_tokens: hasProfile ? 3000 : 2000,  // ✅ 프로필 분석 시 토큰 증가
       messages: [{ role: 'user', content: userPrompt }],
       system: systemPrompt,
