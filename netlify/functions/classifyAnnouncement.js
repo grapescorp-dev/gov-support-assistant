@@ -261,7 +261,7 @@ ${regionClassificationPrompt}
 JSON만 출력하고 다른 텍스트는 포함하지 마세요.`
 
     const message = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20250929',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: hasProfile ? 500 : 300, // ✅ 프로필 매칭 시 토큰 증가
       messages: [
         {
