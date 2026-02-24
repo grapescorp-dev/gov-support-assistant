@@ -383,7 +383,7 @@ export function SearchPage() {
 
       let finalClassMap = cached
 
-      // 캐시 없는 공고만 AI 분류 실행
+      // 캐시 없는 공고만 AI 분류 실행 (공고 분류만, 프로필 미포함)
       if (needsClassification.length > 0) {
         const newClassifications = await classifyAnnouncementsBatch(
           needsClassification,
@@ -394,8 +394,7 @@ export function SearchPage() {
               total: announcements.length,
               processed: cached.size + progress.processed,
             })
-          },
-          { profile: activeProfile }
+          }
         )
 
         // 새 분류 결과를 캐시에 저장

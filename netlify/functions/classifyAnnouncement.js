@@ -76,9 +76,10 @@ const INDUSTRY_CATEGORIES = {
 }
 
 /**
- * 공고를 산업 분야로 분류하고 프로필과의 적합성을 평가하는 함수
+ * 공고를 산업 분야로 분류하는 함수
  * - Haiku 모델 사용 (빠르고 저렴)
- * - [개선] 프로필 정보(businessOverview, targetMarket)를 함께 분석하여 맞춤 매칭
+ * - 공고 자체의 산업 분야만 분류 (프로필 매칭 제외)
+ * - 프로필 매칭은 로컬 checkIndustryMatch()에서 처리
  */
 export async function handler(event) {
   const headers = {
@@ -100,7 +101,7 @@ export async function handler(event) {
   }
 
   try {
-    const { announcement, includeRegion = false, profile = null } = JSON.parse(event.body)
+    const { announcement, includeRegion = false } = JSON.parse(event.body)
 
     if (!announcement || !announcement.title) {
       return {
@@ -120,26 +121,7 @@ export async function handler(event) {
 태그: ${(announcement.tags || []).join(', ') || '미입력'}
 `.trim()
 
-    // ✅ [개선] 프로필 정보 텍스트화 (businessOverview, targetMarket 활용)
-    const hasProfile = profile && (profile.businessOverview || profile.targetMarket || profile.interests?.length > 0)
-    const profileText = hasProfile ? `
-[사용자 프로필 정보]
-사업 개요: ${profile.businessOverview || '미입력'}
-타겟 시장: ${profile.targetMarket || '미입력'}
-관심 분야: ${(profile.interests || []).join(', ') || '미입력'}
-기업 유형: ${profile.companyType || '미입력'}
-소재 지역: ${profile.region || '미입력'}
-`.trim() : null
-
-    // ✅ [개선] 프로필 정보가 있으면 맞춤 분석 수행
-    const systemPrompt = hasProfile
-      ? `당신은 정부지원사업 공고와 사용자 프로필의 적합성을 평가하는 전문가입니다.
-공고 내용과 사용자의 사업 개요, 타겟 시장을 분석하여:
-1. 공고의 산업 분야를 분류하고
-2. 사용자 프로필과의 적합성을 평가합니다.
-사용자의 실제 사업 내용을 기반으로 공고가 적합한지 판단해주세요.
-반드시 JSON 형식으로만 응답하세요.`
-      : `당신은 정부지원사업 공고를 분류하는 전문가입니다.
+    const systemPrompt = `당신은 정부지원사업 공고를 분류하는 전문가입니다.
 공고 내용을 분석하여 가장 적합한 산업 분야${includeRegion ? '와 지역 제한 여부' : ''}를 판단합니다.
 반드시 JSON 형식으로만 응답하세요.`
 
@@ -179,15 +161,6 @@ export async function handler(event) {
     "confidence": 0-100 사이의 확신도
   }` : ''
 
-    // ✅ [개선] 프로필 기반 적합성 분석 응답 포맷
-    const profileMatchResponseFormat = hasProfile ? `,
-  "profileMatch": {
-    "isMatch": true/false (사용자 사업과 공고가 적합한지),
-    "matchScore": 0-100 사이의 적합도 점수,
-    "matchReason": "적합/부적합 판단 이유 (한 문장)",
-    "mismatchType": null | "industry" | "target" | "region" | "stage" (불일치 유형, isMatch가 false일 때)
-  }` : ''
-
     // 기본 분류 옵션
     const industryOptions = `분류 옵션:
 - ai_data: AI, 인공지능, 머신러닝, 데이터 분석 분야
@@ -215,34 +188,7 @@ export async function handler(event) {
 - general_startup: 분야 무관 창업지원 (누구나 가능)
 - general_sme: 분야 무관 중소기업지원 (누구나 가능)`
 
-    // ✅ [개선] 프로필이 있으면 맞춤 분석 프롬프트 사용
-    const userPrompt = hasProfile
-      ? `다음 정부지원사업 공고가 사용자에게 적합한지 분석해주세요.
-
-[공고 정보]
-${announcementText}
-
-${profileText}
-
-${industryOptions}
-${regionClassificationPrompt}
-
-분석 요청:
-1. 공고의 산업 분야를 분류하세요
-2. 사용자의 사업 개요와 타겟 시장을 분석하여 이 공고가 적합한지 판단하세요
-3. 공고가 교육생/참가자 모집, 운영사 모집, 특정 업종(바이오, 제조업 등) 전용인 경우 사용자 사업과 맞지 않으면 부적합으로 판단하세요
-
-다음 JSON 형식으로 응답하세요:
-{
-  "primaryIndustry": "가장 적합한 분야 코드 (위 옵션 중 하나)",
-  "secondaryIndustry": "두 번째로 적합한 분야 코드 또는 null",
-  "confidence": 0-100 사이의 확신도,
-  "isGeneralProgram": true/false (분야 무관 범용 프로그램인지),
-  "targetType": "startup" | "sme" | "operator" | "individual" (대상 유형)${regionResponseFormat}${profileMatchResponseFormat}
-}
-
-JSON만 출력하고 다른 텍스트는 포함하지 마세요.`
-      : `다음 정부지원사업 공고의 타겟 산업 분야를 분류해주세요.
+    const userPrompt = `다음 정부지원사업 공고의 타겟 산업 분야를 분류해주세요.
 
 ${announcementText}
 
@@ -262,7 +208,7 @@ JSON만 출력하고 다른 텍스트는 포함하지 마세요.`
 
     const message = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: hasProfile ? 500 : 300, // ✅ 프로필 매칭 시 토큰 증가
+      max_tokens: 300,
       messages: [
         {
           role: 'user',
@@ -327,36 +273,6 @@ JSON만 출력하고 다른 텍스트는 포함하지 마세요.`
       }
     }
 
-    // ✅ [개선] 프로필 매칭 결과 유효성 검증
-    if (hasProfile && classification.profileMatch) {
-      const profileMatch = classification.profileMatch
-
-      // isMatch 검증
-      if (typeof profileMatch.isMatch !== 'boolean') {
-        profileMatch.isMatch = true // 기본값: 적합
-      }
-
-      // matchScore 검증
-      if (typeof profileMatch.matchScore !== 'number' ||
-          profileMatch.matchScore < 0 ||
-          profileMatch.matchScore > 100) {
-        profileMatch.matchScore = profileMatch.isMatch ? 70 : 30
-      }
-
-      // mismatchType 검증
-      if (profileMatch.mismatchType &&
-          !['industry', 'target', 'region', 'stage'].includes(profileMatch.mismatchType)) {
-        profileMatch.mismatchType = null
-      }
-
-      // matchReason이 없으면 기본값
-      if (!profileMatch.matchReason) {
-        profileMatch.matchReason = profileMatch.isMatch
-          ? '공고와 사업 분야가 일치합니다'
-          : '공고 대상과 사업 분야가 일치하지 않습니다'
-      }
-    }
-
     return {
       statusCode: 200,
       headers,
@@ -365,7 +281,6 @@ JSON만 출력하고 다른 텍스트는 포함하지 마세요.`
         data: {
           announcementId: announcement.id,
           ...classification,
-          hasProfileAnalysis: hasProfile, // ✅ 프로필 분석 여부 표시
           classifiedAt: new Date().toISOString(),
         },
       }),

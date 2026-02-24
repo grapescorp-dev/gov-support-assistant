@@ -692,27 +692,23 @@ export function setIndustryClassToCache(announcement, classification) {
 
 /**
  * AI(Haiku)를 사용하여 공고 분류
- * - 캐시가 있으면 캐시 반환
+ * - 캐시가 있으면 캐시 반환 (7일 유효)
  * - 없으면 API 호출 후 캐시 저장
  * - API 실패 시 키워드 기반 fallback 분류
  *
- * [개선] profile 옵션 추가 - businessOverview, targetMarket을 AI가 분석하여 맞춤 매칭
+ * ※ 공고 자체의 산업 분야만 분류 (프로필 미포함)
+ * ※ 프로필 매칭은 로컬 checkIndustryMatch()에서 처리 → 추가 API 비용 없음
  *
  * @param {Object} announcement - 공고 객체
  * @param {Object} options - 옵션
  * @param {boolean} options.includeRegion - 지역 분류 포함 여부 (기본 false)
- * @param {Object} options.profile - 사용자 프로필 (선택, 맞춤 분석용)
  * @returns {Promise<Object>} 분류 결과
  */
 export async function classifyAnnouncement(announcement, options = {}) {
-  const { includeRegion = false, profile = null } = options
-
-  // ✅ [개선] 프로필이 있으면 캐시 키에 프로필 ID 포함 (프로필별 맞춤 분석 캐시)
-  const cacheKeyProfile = profile?.id || null
+  const { includeRegion = false } = options
 
   // 1. 캐시 확인 (지역 분류 요청 시 캐시에 regionRestriction이 있는지도 확인)
-  // ✅ 프로필 분석은 캐시하지 않음 (프로필이 변경될 수 있음)
-  const cached = !profile ? getIndustryClassFromCache(announcement) : null
+  const cached = getIndustryClassFromCache(announcement)
   if (cached) {
     // 지역 분류를 요청했는데 캐시에 없으면 재호출 필요
     if (includeRegion && !cached.regionRestriction) {
@@ -723,36 +719,20 @@ export async function classifyAnnouncement(announcement, options = {}) {
     }
   }
 
-  // 2. API 호출
+  // 2. API 호출 (공고 분류만, 프로필 미포함)
   try {
-    const hasProfile = profile && (profile.businessOverview || profile.targetMarket)
-    console.log(`[classifyAnnouncement] Classifying: ${announcement.id} (includeRegion: ${includeRegion}, hasProfile: ${!!hasProfile})`)
-
-    // ✅ [개선] 프로필 정보 전달 (businessOverview, targetMarket, interests 등)
-    const requestBody = {
-      announcement,
-      includeRegion,
-      ...(hasProfile && {
-        profile: {
-          businessOverview: profile.businessOverview || '',
-          targetMarket: profile.targetMarket || '',
-          interests: profile.interests || [],
-          companyType: profile.companyType || '',
-          region: profile.region || '',
-        }
-      })
-    }
+    console.log(`[classifyAnnouncement] Classifying: ${announcement.id} (includeRegion: ${includeRegion})`)
 
     const response = await fetch(`${API_BASE}/classifyAnnouncement`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody),
+      body: JSON.stringify({ announcement, includeRegion }),
     })
 
     const result = await response.json()
 
-    // 3. 성공 시 캐시 저장 (프로필 분석 결과는 캐시하지 않음)
-    if (result.success && result.data && !profile) {
+    // 3. 성공 시 항상 캐시 저장 (7일)
+    if (result.success && result.data) {
       setIndustryClassToCache(announcement, result.data)
     }
 
@@ -761,10 +741,8 @@ export async function classifyAnnouncement(announcement, options = {}) {
     console.error('[classifyAnnouncement] Error:', error)
     // 실패 시 키워드 기반 fallback 분류
     const fallbackResult = classifyByKeywords(announcement)
-    // fallback 결과도 캐시 저장 (API 재호출 방지) - 프로필 없을 때만
-    if (!profile) {
-      setIndustryClassToCache(announcement, fallbackResult)
-    }
+    // fallback 결과도 캐시 저장 (API 재호출 방지)
+    setIndustryClassToCache(announcement, fallbackResult)
     return {
       success: true,
       data: fallbackResult,
@@ -894,42 +872,32 @@ function classifyByKeywords(announcement) {
 /**
  * 여러 공고를 배치로 분류 (배치 API 사용으로 비용 절감)
  * - 10개씩 묶어서 배치 API 호출
- * - 캐시된 것은 스킵 (프로필 분석 시에는 캐시 무시)
+ * - 캐시된 것은 스킵
  * - API 실패 시 개별 분류로 fallback
  *
- * [개선] profile 옵션 추가 - businessOverview, targetMarket을 AI가 분석하여 맞춤 매칭
+ * ※ 공고 자체의 산업 분야만 분류 (프로필 미포함)
+ * ※ 프로필 매칭은 로컬 checkIndustryMatch()에서 처리 → 추가 API 비용 없음
  *
  * @param {Object[]} announcements - 공고 배열
  * @param {number} batchSize - 배치 크기 (기본 10, 최대 10)
  * @param {Function} onProgress - 진행률 콜백 (optional)
- * @param {Object} options - 추가 옵션
- * @param {Object} options.profile - 사용자 프로필 (선택, 맞춤 분석용)
  * @returns {Promise<Map>} announcementId -> classification 매핑
  */
-export async function classifyAnnouncementsBatch(announcements, batchSize = 10, onProgress = null, options = {}) {
-  const { profile = null } = options
+export async function classifyAnnouncementsBatch(announcements, batchSize = 10, onProgress = null) {
   const results = new Map()
   const uncached = []
 
-  // ✅ [개선] 프로필이 있으면 캐시 무시 (맞춤 분석 필요)
-  const hasProfile = profile && (profile.businessOverview || profile.targetMarket)
-
-  // 1. 캐시된 것과 아닌 것 분리 (프로필 분석 시에는 모두 재분류)
+  // 1. 캐시된 것과 아닌 것 분리
   for (const ann of announcements) {
-    if (hasProfile) {
-      // 프로필 분석 시에는 모든 공고 재분류
-      uncached.push(ann)
+    const cached = getIndustryClassFromCache(ann)
+    if (cached) {
+      results.set(ann.id, cached)
     } else {
-      const cached = getIndustryClassFromCache(ann)
-      if (cached) {
-        results.set(ann.id, cached)
-      } else {
-        uncached.push(ann)
-      }
+      uncached.push(ann)
     }
   }
 
-  console.log(`[classifyBatch] Cached: ${results.size}, Need API: ${uncached.length}, hasProfile: ${hasProfile}`)
+  console.log(`[classifyBatch] Cached: ${results.size}, Need API: ${uncached.length}`)
 
   if (onProgress) {
     onProgress({ cached: results.size, total: announcements.length, processed: results.size })
@@ -943,27 +911,15 @@ export async function classifyAnnouncementsBatch(announcements, batchSize = 10, 
   // 2. 배치 API 호출 (10개씩 묶어서)
   const actualBatchSize = Math.min(batchSize, 10)
 
-  // ✅ [개선] 프로필 정보 준비
-  const profileData = hasProfile ? {
-    businessOverview: profile.businessOverview || '',
-    targetMarket: profile.targetMarket || '',
-    interests: profile.interests || [],
-    companyType: profile.companyType || '',
-    region: profile.region || '',
-  } : null
-
   for (let i = 0; i < uncached.length; i += actualBatchSize) {
     const batch = uncached.slice(i, i + actualBatchSize)
 
     try {
-      // 배치 API 호출 (✅ 프로필 정보 포함)
+      // 배치 API 호출 (공고 분류만, 프로필 미포함)
       const response = await fetch(`${API_BASE}/classifyAnnouncementBatch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          announcements: batch,
-          ...(profileData && { profile: profileData })
-        }),
+        body: JSON.stringify({ announcements: batch }),
       })
 
       const result = await response.json()
@@ -981,12 +937,12 @@ export async function classifyAnnouncementsBatch(announcements, batchSize = 10, 
       } else {
         // 배치 API 실패 시 개별 분류로 fallback
         console.warn('[classifyBatch] Batch API failed, falling back to individual classification')
-        await classifyBatchFallback(batch, results, profileData)
+        await classifyBatchFallback(batch, results)
       }
     } catch (error) {
       console.error('[classifyBatch] Batch API error:', error)
       // 에러 시 개별 분류로 fallback
-      await classifyBatchFallback(batch, results, profileData)
+      await classifyBatchFallback(batch, results)
     }
 
     if (onProgress) {
@@ -1005,14 +961,11 @@ export async function classifyAnnouncementsBatch(announcements, batchSize = 10, 
  * 배치 API 실패 시 개별 분류로 fallback
  * @param {Object[]} batch - 공고 배열
  * @param {Map} results - 결과 맵
- * @param {Object|null} profileData - 프로필 데이터 (선택)
  */
-async function classifyBatchFallback(batch, results, profileData = null) {
+async function classifyBatchFallback(batch, results) {
   for (const ann of batch) {
     try {
-      const result = await classifyAnnouncement(ann, {
-        profile: profileData ? { ...profileData, id: 'fallback' } : null,
-      })
+      const result = await classifyAnnouncement(ann)
       if (result.success && result.data) {
         results.set(ann.id, result.data)
       }
