@@ -31,3 +31,6 @@ lerna-debug.log*
 
 # Local Netlify folder (state/cache)
 .netlify
+
+# Claude Code
+.claude/

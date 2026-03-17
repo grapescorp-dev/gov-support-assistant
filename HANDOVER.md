@@ -30,7 +30,7 @@
 Netlify 환경 변수에 설정 필요:
 
 ```
-ANTHROPIC_API_KEY=sk-ant-...  (Anthropic API 키)
+ANTHROPIC_API_KEY  (Netlify 환경변수에 설정)
 ```
 
 ---

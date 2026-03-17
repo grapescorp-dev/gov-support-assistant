@@ -1,5 +1,7 @@
 // 기업마당 공공데이터 API 연동
 // API 문서: https://www.bizinfo.go.kr/web/lay1/program/S1T175C174/apiDetail.do?id=bizinfoApi
+import { applySecurity } from './utils/security.js'
+
 const BIZINFO_API_URL = 'https://www.bizinfo.go.kr/uss/rss/bizinfoApi.do'
 
 // 타임아웃이 있는 fetch 함수
@@ -1186,13 +1188,9 @@ const fetchKstartupAnnouncements = async ({ apiKey, max = 100, perPage = 100 } =
 }
 
 export async function handler(event) {
-  const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Content-Type': 'application/json',
-  }
-
-  if (event.httpMethod === 'OPTIONS') return { statusCode: 200, headers, body: '' }
+  const security = applySecurity(event, { tier: 'standard' })
+  if (!security.ok) return security.response
+  const headers = security.headers
 
   try {
     const { keyword, category, refresh, debug } = event.queryStringParameters || {}

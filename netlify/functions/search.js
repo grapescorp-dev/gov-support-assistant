@@ -1,17 +1,12 @@
 // netlify/functions/search.js
 // fetchAnnouncements의 handler를 직접 import
 import { handler as fetchAnnouncementsHandler } from './fetchAnnouncements.js'
+import { applySecurity } from './utils/security.js'
 
 export async function handler(event) {
-  const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Content-Type': 'application/json',
-  }
-
-  if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 200, headers, body: '' }
-  }
+  const security = applySecurity(event, { tier: 'standard' })
+  if (!security.ok) return security.response
+  const headers = security.headers
 
   try {
     // fetchAnnouncements handler를 직접 호출

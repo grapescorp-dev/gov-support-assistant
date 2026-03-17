@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { applySecurity } from './utils/security.js'
 
 const anthropic = new Anthropic({
   // eslint-disable-next-line no-undef
@@ -59,15 +60,9 @@ const fetchParsedFromMssDocs = async (announcement) => {
 }
 
 export async function handler(event) {
-  const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Content-Type': 'application/json',
-  }
-
-  if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 200, headers, body: '' }
-  }
+  const security = applySecurity(event, { tier: 'ai' })
+  if (!security.ok) return security.response
+  const headers = security.headers
 
   if (event.httpMethod !== 'POST') {
     return {

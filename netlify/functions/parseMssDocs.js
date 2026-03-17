@@ -3,6 +3,7 @@
  * HWPX/PDF에서 지원자격/제외조건/필수요건/태그를 추출
  */
 import { Buffer } from 'node:buffer'
+import { applySecurity } from './utils/security.js'
 
 // ==============================================
 // 간단한 메모리 캐시 (서버리스 환경에서 best-effort)
@@ -324,15 +325,9 @@ const selectAnnouncementFile = (files) => {
 // ==============================================
 
 export async function handler(event) {
-  const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Content-Type': 'application/json',
-  }
-
-  if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 200, headers, body: '' }
-  }
+  const security = applySecurity(event, { tier: 'standard' })
+  if (!security.ok) return security.response
+  const headers = security.headers
 
   if (event.httpMethod !== 'POST') {
     return {

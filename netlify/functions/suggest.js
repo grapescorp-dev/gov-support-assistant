@@ -1,14 +1,10 @@
 // 섹션별 AI 작성 제안 API
-export async function handler(event) {
-  const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Content-Type': 'application/json',
-  }
+import { applySecurity } from './utils/security.js'
 
-  if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 200, headers, body: '' }
-  }
+export async function handler(event) {
+  const security = applySecurity(event, { tier: 'standard' })
+  if (!security.ok) return security.response
+  const headers = security.headers
 
   if (event.httpMethod !== 'POST') {
     return {
